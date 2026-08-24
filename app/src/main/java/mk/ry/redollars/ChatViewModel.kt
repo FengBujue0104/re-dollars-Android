@@ -1,7 +1,11 @@
 package mk.ry.redollars
 
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -26,11 +30,13 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import mk.ry.redollars.data.FetchedImage
 import mk.ry.redollars.data.MessageRepository
 import mk.ry.redollars.net.AppJson
 import mk.ry.redollars.net.MessageDto
 import mk.ry.redollars.net.NotificationItem
 import mk.ry.redollars.net.UploadResult
+import mk.ry.redollars.net.UserProfileDto
 import mk.ry.redollars.net.UserSearchDto
 import mk.ry.redollars.net.WsUser
 import mk.ry.redollars.voice.VoiceRecorder
@@ -325,16 +331,85 @@ class ChatViewModel @Inject constructor(
 
     fun insertSmiley(code: String) = insertAtCursor(code)
 
+    /** uid → resolved profile cache for long-press mentions (avoids repeat lookups). */
+    private val uidMentionCache = HashMap<Long, UserProfileDto>()
+
     /** Long-press an author's avatar to mention them. Messages carry a uid + nickname
-     *  but no `@username` handle, so we insert the resolved `[user=id]` BBCode directly —
-     *  exactly what [transformMentions] emits for a completed @-mention — rather than the
-     *  readable `@name` the completer inserts. */
+     *  but no `@username` handle, so we resolve the username via the backend profile
+     *  endpoint (cached), insert the readable `@username ` like the @-completer, and
+     *  pre-fill [mentionCache] so [transformMentions] turns it into a `[user=id]` tag
+     *  at send time. Falls back to the raw BBCode if resolution fails. */
     fun mentionUser(uid: Long, nickname: String) {
-        insertAtCursor("[user=$uid]${nickname.ifBlank { uid.toString() }}[/user] ")
+        viewModelScope.launch {
+            val cached = uidMentionCache[uid]
+            val username = cached?.username?.takeIf { it.isNotBlank() }
+                ?: repo.fetchUserProfile(uid)?.also { uidMentionCache[uid] = it }?.username
+            if (!username.isNullOrBlank()) {
+                mentionCache[username] = UserSearchDto(
+                    id = uid,
+                    username = username,
+                    nickname = nickname.ifBlank { cached?.nickname ?: nickname },
+                )
+                // transformMentions only rewrites @tokens at a line start or after
+                // whitespace; add a leading space so a mention typed mid-word still
+                // becomes a [user=id] tag when sent.
+                val cursor = composerValue.selection.min
+                val atBoundary = cursor == 0 ||
+                    composerValue.text.getOrNull(cursor - 1)?.isWhitespace() == true
+                insertAtCursor(if (atBoundary) "@$username " else " @$username ")
+            } else {
+                insertAtCursor("[user=$uid]${nickname.ifBlank { uid.toString() }}[/user] ")
+            }
+        }
     }
 
     /** A saved sticker was picked from the panel (SmileyPanel.tsx insert format). */
     fun insertSticker(url: String) = insertAtCursor("[sticker]$url[/sticker]")
+
+    /** Download the lightbox image to the system gallery (Pictures/ReDollars). */
+    fun downloadImage(url: String) {
+        viewModelScope.launch {
+            val img = repo.fetchImage(url)
+            if (img == null || img.bytes.isEmpty()) {
+                toast("下载失败：无法获取图片")
+                return@launch
+            }
+            val saved = withContext(Dispatchers.IO) { saveImageToGallery(img) }
+            toast(if (saved) "已保存到相册" else "保存失败")
+        }
+    }
+
+    private fun saveImageToGallery(img: FetchedImage): Boolean = runCatching {
+        val mime = img.mimeType?.takeIf { it.startsWith("image/") } ?: "image/jpeg"
+        val ext = mime.removePrefix("image/").takeIf { it.length in 2..5 } ?: "jpg"
+        val name = "redollars_${System.currentTimeMillis()}.$ext"
+        val resolver = appContext.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(MediaStore.Images.Media.MIME_TYPE, mime)
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ReDollars")
+            values.put(MediaStore.Images.Media.IS_PENDING, 1)
+            val uri = resolver.insert(
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                values,
+            ) ?: return@runCatching false
+            resolver.openOutputStream(uri)?.use { it.write(img.bytes) } ?: return@runCatching false
+            values.clear()
+            values.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        } else {
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: return@runCatching false
+            resolver.openOutputStream(uri)?.use { it.write(img.bytes) } ?: return@runCatching false
+        }
+        true
+    }.getOrDefault(false)
+
+    private fun toast(message: String) {
+        android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
+    }
 
     // ---- Image upload + sticker favorites ----
 

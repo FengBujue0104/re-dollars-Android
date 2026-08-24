@@ -5,13 +5,16 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import android.os.SystemClock
 import dagger.hilt.android.AndroidEntryPoint
 import android.webkit.WebView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -34,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -121,6 +125,19 @@ private fun RedollarsApp(
 
             var webView by remember { mutableStateOf<WebView?>(null) }
             var lightboxUrl by remember { mutableStateOf<String?>(null) }
+            var pendingDownloadUrl by remember { mutableStateOf<String?>(null) }
+            val context = LocalContext.current
+            // Android 8/9 need WRITE_EXTERNAL_STORAGE before saving to the gallery; 10+
+            // uses scoped MediaStore and never asks.
+            val downloadLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission(),
+            ) { granted ->
+                pendingDownloadUrl?.let { url ->
+                    if (granted) vm.downloadImage(url)
+                    else Toast.makeText(context, "需要存储权限才能保存图片", Toast.LENGTH_SHORT).show()
+                }
+                pendingDownloadUrl = null
+            }
 
             // A returning user (logged in on a previous launch) is auto-logged-in silently:
             // the login WebView is mounted hidden right away and re-derives the session in
@@ -232,6 +249,17 @@ private fun RedollarsApp(
                     url = url,
                     onDismiss = { lightboxUrl = null },
                     onSaveSticker = { vm.addFavorite(url) },
+                    onDownload = {
+                        if (Build.VERSION.SDK_INT <= 28 &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            pendingDownloadUrl = url
+                            downloadLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        } else {
+                            vm.downloadImage(url)
+                        }
+                    },
                 )
             }
         }

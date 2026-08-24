@@ -21,11 +21,11 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "mk.ry.redollars"
+        applicationId = "mk.ry.redollars.feng"
         minSdk = 26
         targetSdk = 36
         versionCode = 2
-        versionName = "1.1"
+        versionName = "0.1"
     }
 
     signingConfigs {

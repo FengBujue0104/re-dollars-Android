@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import mk.ry.redollars.data.db.MessageDao
@@ -28,6 +30,7 @@ import mk.ry.redollars.net.MessageDto
 import mk.ry.redollars.net.NotificationItem
 import mk.ry.redollars.net.ReactionDto
 import mk.ry.redollars.net.AppJson
+import mk.ry.redollars.net.Config
 import mk.ry.redollars.net.GalleryResponse
 import mk.ry.redollars.net.RestApi
 import mk.ry.redollars.net.UploadApi
@@ -40,8 +43,12 @@ import kotlinx.serialization.builtins.serializer
 import mk.ry.redollars.net.WsEvent
 import mk.ry.redollars.net.WsUser
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** Raw bytes + MIME type of an image fetched for local saving. */
+data class FetchedImage(val bytes: ByteArray, val mimeType: String?)
 
 /**
  * Single source of truth for chat messages. Room is authoritative; REST and the
@@ -54,7 +61,7 @@ import javax.inject.Singleton
 @Singleton
 class MessageRepository @Inject constructor(
     private val dao: MessageDao,
-    http: OkHttpClient,
+    private val http: OkHttpClient,
     private val prefs: SharedPreferences,
     @ApplicationScope private val scope: CoroutineScope,
 ) {
@@ -230,6 +237,23 @@ class MessageRepository @Inject constructor(
     /** Resolve a uid's cached profile (true nickname + avatar) from the backend. */
     suspend fun fetchUserProfile(uid: Long): UserProfileDto? =
         runCatching { rest.getUser(uid) }.getOrNull()
+
+    /** Fetch raw image bytes + MIME type for the lightbox download button. */
+    suspend fun fetchImage(url: String): FetchedImage? = withContext(Dispatchers.IO) {
+        if (url.isBlank()) return@withContext null
+        runCatching {
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", Config.USER_AGENT)
+                .get()
+                .build()
+            http.newCall(req).execute().use { res ->
+                val body = res.body
+                if (!res.isSuccessful || body == null) null
+                else FetchedImage(body.bytes(), res.header("Content-Type")?.substringBefore(';')?.trim())
+            }
+        }.getOrNull()
+    }
 
     /** Mention autocomplete: users whose nickname/username matches [query]. */
     suspend fun searchUsers(query: String): List<UserSearchDto> =

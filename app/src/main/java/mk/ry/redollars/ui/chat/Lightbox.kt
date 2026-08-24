@@ -3,7 +3,9 @@ package mk.ry.redollars.ui.chat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -22,7 +24,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -36,7 +41,12 @@ import coil3.compose.AsyncImage
  * whole app.
  */
 @Composable
-fun Lightbox(url: String, onDismiss: () -> Unit, onSaveSticker: (() -> Unit)? = null) {
+fun Lightbox(
+    url: String,
+    onDismiss: () -> Unit,
+    onSaveSticker: (() -> Unit)? = null,
+    onDownload: (() -> Unit)? = null,
+) {
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -86,17 +96,61 @@ fun Lightbox(url: String, onDismiss: () -> Unit, onSaveSticker: (() -> Unit)? = 
             ) {
                 Icon(Icons.Filled.Close, contentDescription = "Close")
             }
-            if (onSaveSticker != null) {
-                FilledTonalIconButton(
-                    onClick = {
-                        onSaveSticker()
-                        onDismiss()
-                    },
-                    modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp),
+            if (onSaveSticker != null || onDownload != null) {
+                Row(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Filled.Star, contentDescription = "Save to stickers")
+                    if (onDownload != null) {
+                        FilledTonalIconButton(onClick = onDownload) {
+                            Icon(DownloadIcon, contentDescription = "Save image to gallery")
+                        }
+                    }
+                    if (onSaveSticker != null) {
+                        FilledTonalIconButton(
+                            onClick = {
+                                onSaveSticker()
+                                onDismiss()
+                            },
+                        ) {
+                            Icon(Icons.Filled.Star, contentDescription = "Save to stickers")
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/** Tabler/Material-style download glyph (arrow into a tray); drawn locally because the
+ *  bundled material-icons-core set has no Download icon. */
+private val DownloadIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+    ImageVector.Builder(
+        name = "Download",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(5f, 20f)
+            horizontalLineToRelative(14f)
+            verticalLineToRelative(-2f)
+            horizontalLineToRelative(-14f)
+            close()
+            moveTo(12f, 3f)
+            verticalLineToRelative(9.59f)
+            lineToRelative(3.29f, -3.3f)
+            lineToRelative(1.42f, 1.42f)
+            lineToRelative(-5.71f, 5.71f)
+            lineToRelative(-5.71f, -5.71f)
+            lineToRelative(1.42f, -1.42f)
+            lineToRelative(3.29f, 3.3f)
+            verticalLineToRelative(-9.59f)
+            close()
+        }
+    }.build()
 }
