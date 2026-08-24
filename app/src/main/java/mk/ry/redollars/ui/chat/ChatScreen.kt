@@ -102,6 +102,7 @@ fun ChatScreen(
                 onGallery = { showGallery = true },
                 onBlockManager = { showBlockManager = true },
                 onNotifications = { showNotifications = true },
+                onReconnect = vm::reconnect,
                 // Logged in: open the account sheet (status + logout). Logged out: the
                 // login WebView, as before.
                 onAccount = { if (vm.session != null) vm.showAccount = true else onOpenLogin() },
@@ -166,7 +167,14 @@ fun ChatScreen(
     }
 
     if (showSearch) {
-        SearchSheet(search = vm::searchMessages, onDismiss = { showSearch = false })
+        SearchSheet(
+            search = vm::searchMessages,
+            onDismiss = { showSearch = false },
+            onOpen = { msg ->
+                showSearch = false
+                vm.pendingJumpId = msg.id
+            },
+        )
     }
     if (showGallery) {
         GallerySheet(fetch = vm::fetchGallery, onDismiss = { showGallery = false })
@@ -238,6 +246,7 @@ private fun ChatTopBar(
     onGallery: () -> Unit,
     onBlockManager: () -> Unit,
     onNotifications: () -> Unit,
+    onReconnect: () -> Unit,
     onAccount: () -> Unit,
 ) {
     TopAppBar(
@@ -248,7 +257,7 @@ private fun ChatTopBar(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
-                StatusLine(connected, onlineCount)
+                StatusLine(connected, onlineCount, onReconnect)
             }
         },
         actions = {
@@ -303,8 +312,11 @@ private fun ChatTopBar(
 }
 
 @Composable
-private fun StatusLine(connected: Boolean, onlineCount: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun StatusLine(connected: Boolean, onlineCount: Int, onReconnect: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.clickable(onClick = onReconnect),
+    ) {
         Box(
             Modifier
                 .size(8.dp)
@@ -313,7 +325,7 @@ private fun StatusLine(connected: Boolean, onlineCount: Int) {
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            text = if (connected) "$onlineCount online" else "reconnecting…",
+            text = if (connected) "$onlineCount online" else "点击重连",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

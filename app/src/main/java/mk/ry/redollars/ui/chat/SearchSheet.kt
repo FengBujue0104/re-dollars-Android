@@ -1,6 +1,7 @@
 package mk.ry.redollars.ui.chat
 
 import android.text.format.DateUtils
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -64,6 +65,7 @@ private fun resultPreview(content: String): String = content
 fun SearchSheet(
     search: suspend (String, Int) -> List<MessageDto>,
     onDismiss: () -> Unit,
+    onOpen: (MessageDto) -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MessageDto>>(emptyList()) }
@@ -116,7 +118,7 @@ fun SearchSheet(
                 },
             )
             LazyColumn(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                items(results, key = { it.id }) { m -> SearchResultRow(m) }
+                items(results, key = { it.id }) { m -> SearchResultRow(m, onClick = { onOpen(m) }) }
                 if (results.isNotEmpty() && !exhausted) {
                     item(key = "more") {
                         Box(
@@ -149,9 +151,9 @@ fun SearchSheet(
 }
 
 @Composable
-private fun SearchResultRow(m: MessageDto) {
+private fun SearchResultRow(m: MessageDto, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp)) {
         AsyncImage(
             model = avatarUrl(m.avatar, 'l'),
             contentDescription = null,

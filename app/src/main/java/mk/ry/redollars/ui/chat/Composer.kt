@@ -9,7 +9,10 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.WindowInsets
@@ -77,7 +81,9 @@ import mk.ry.redollars.net.MessageDto
 import mk.ry.redollars.net.UserSearchDto
 import kotlinx.coroutines.flow.MutableStateFlow
 import mk.ry.redollars.ui.render.LocalAudioPlayer
+import mk.ry.redollars.ui.render.LocalImageViewer
 import mk.ry.redollars.ui.render.Smilies
+import mk.ry.redollars.ui.render.VideoViewerDialog
 import mk.ry.redollars.ui.render.avatarUrl
 
 /** The web app's emoji-panel glyph (styles/index.css --dollars-icon-emoji): a tray
@@ -162,6 +168,9 @@ fun ChatComposer(
     var showSmilies by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val openViewer = LocalImageViewer.current
+    val previews = remember(value.text) { mediaPreviews(value.text) }
+    var previewVideoUrl by remember { mutableStateOf<String?>(null) }
     // Keyboard and smiley panel are mutually exclusive: the panel folds away the moment
     // the IME shows (e.g. the user taps the text field). Opening the panel hides the
     // keyboard below, so this effect never fights the toggle.
@@ -225,6 +234,13 @@ fun ChatComposer(
                 if (recordingVoice) {
                     RecordingBar(recordSeconds, onCancelVoice, onStopVoice)
                 } else {
+                    if (previews.isNotEmpty()) {
+                        MediaPreviewRow(
+                            previews = previews,
+                            onOpenImage = { url -> openViewer(url) },
+                            onOpenVideo = { url -> previewVideoUrl = url },
+                        )
+                    }
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -332,6 +348,67 @@ fun ChatComposer(
                             )
                         },
                         onRemoveFavorite = onRemoveFavorite,
+                    )
+                }
+            }
+        }
+    }
+
+    previewVideoUrl?.let { url ->
+        VideoViewerDialog(url = url) { previewVideoUrl = null }
+    }
+}
+
+/** A `[img]` / `[video]` tag in the composer draft, shown as a preview bubble. */
+private data class MediaPreview(val url: String, val isVideo: Boolean)
+
+private val DRAFT_IMG_TAG = Regex("\\[img\\](.+?)\\[/img\\]", RegexOption.IGNORE_CASE)
+private val DRAFT_VIDEO_TAG = Regex("\\[video\\](.+?)\\[/video\\]", RegexOption.IGNORE_CASE)
+
+/** Derive previews from the draft text so they appear on insert and vanish on delete/send. */
+private fun mediaPreviews(text: String): List<MediaPreview> =
+    DRAFT_IMG_TAG.findAll(text).map { MediaPreview(it.groupValues[1].trim(), false) }.toList() +
+        DRAFT_VIDEO_TAG.findAll(text).map { MediaPreview(it.groupValues[1].trim(), true) }.toList()
+
+/** Horizontal strip of image/video preview bubbles above the input; tap to view. */
+@Composable
+private fun MediaPreviewRow(
+    previews: List<MediaPreview>,
+    onOpenImage: (String) -> Unit,
+    onOpenVideo: (String) -> Unit,
+) {
+    val cs = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        previews.forEach { p ->
+            Box(
+                Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(cs.surfaceVariant)
+                    .clickable {
+                        if (p.isVideo) onOpenVideo(p.url) else onOpenImage(p.url)
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (p.isVideo) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = "预览视频",
+                        tint = cs.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp),
+                    )
+                } else {
+                    AsyncImage(
+                        model = p.url,
+                        contentDescription = "预览图片",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
             }

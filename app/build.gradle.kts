@@ -24,8 +24,8 @@ android {
         applicationId = "mk.ry.redollars.feng"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1"
+        versionCode = 3
+        versionName = "0.2"
     }
 
     signingConfigs {

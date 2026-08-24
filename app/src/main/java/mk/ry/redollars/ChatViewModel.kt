@@ -176,6 +176,15 @@ class ChatViewModel @Inject constructor(
         repo.connect(uid = 0) // anonymous read connection until the user logs in
     }
 
+    /** Force a fresh WebSocket connection (tap the top-bar status when offline). */
+    fun reconnect() {
+        if (repo.connected.value) return
+        val info = session
+        if (info != null) repo.connect(info.uid, info.name, null)
+        else repo.connect(0)
+        noteSend("正在重新连接…")
+    }
+
     fun onLoggedIn(info: SessionInfo) {
         // A rymk-auth request is already in flight for this same user. The OAuth redirect
         // chain runs through logged-in bgm.tv pages (/oauth/authorize) that still expose

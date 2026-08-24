@@ -162,7 +162,7 @@ fun VideoBlockView(url: String) {
         }
     }
 
-    if (open) VideoDialog(url) { open = false }
+    if (open) VideoViewerDialog(url) { open = false }
 }
 
 private class VideoMeta(val frame: ImageBitmap, val durationMs: Long)
@@ -204,9 +204,11 @@ private fun loadVideoMeta(dir: File, url: String): VideoMeta? = runCatching {
     }
 }.getOrNull()
 
+/** Fullscreen ExoPlayer dialog for a remote video clip; shared by inline messages,
+ *  the media wall, and composer previews. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun VideoDialog(url: String, onClose: () -> Unit) {
+fun VideoViewerDialog(url: String, onClose: () -> Unit) {
     val ctx = LocalContext.current
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
