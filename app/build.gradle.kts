@@ -21,16 +21,16 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "mk.ry.redollars.feng"
+        applicationId = "mk.ry.redollars.feng.test"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.3.3"
+        versionCode = 8
+        versionName = "0.3.4-test"
     }
 
     signingConfigs {
         create("release") {
-            storeFile = file("../release.keystore")
+            storeFile = file("../release-test.keystore")
 
             val localProperties = Properties()
             val localPropertiesFile = rootProject.file("local.properties")
