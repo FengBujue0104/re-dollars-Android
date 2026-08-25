@@ -13,6 +13,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -64,6 +65,7 @@ data class VoiceDraft(
 class ChatViewModel @Inject constructor(
     private val repo: MessageRepository,
     @param:ApplicationContext private val appContext: Context,
+    private val savedState: SavedStateHandle,
 ) : ViewModel() {
 
     private val sessionHintPrefs =
@@ -122,8 +124,19 @@ class ChatViewModel @Inject constructor(
     var replyTo by mutableStateOf<MessageDto?>(null); private set
     /** Composer contents + cursor, hoisted so edit prefill, smiley insertion and
      *  mention completion can all manipulate it. */
-    var composerValue by mutableStateOf(TextFieldValue(""))
+    private val composerDraftKey = "composer_draft_text"
+    var composerValue by mutableStateOf(
+        savedState.get<String>(composerDraftKey)?.let { TextFieldValue(it, TextRange(it.length)) }
+            ?: TextFieldValue(""),
+    )
         private set
+
+    /** Set the composer value and persist the text so an OS process kill doesn't eat
+     *  an in-progress message. */
+    private fun updateComposer(value: TextFieldValue) {
+        composerValue = value
+        savedState[composerDraftKey] = value.text
+    }
     /** Suggestions for the trailing `@query` at the cursor (mention autocomplete). */
     var mentionCandidates by mutableStateOf<List<UserSearchDto>>(emptyList())
         private set
@@ -391,7 +404,7 @@ class ChatViewModel @Inject constructor(
 
     /** Programmatic composer reset (send/edit flows); cursor to end, suggestions gone. */
     private fun setComposer(text: String) {
-        composerValue = TextFieldValue(text, TextRange(text.length))
+        updateComposer(TextFieldValue(text, TextRange(text.length)))
         mentionJob?.cancel()
         mentionCandidates = emptyList()
         mentionStart = -1
@@ -401,7 +414,7 @@ class ChatViewModel @Inject constructor(
     fun insertAtCursor(snippet: String) {
         val v = composerValue
         val text = v.text.replaceRange(v.selection.min, v.selection.max, snippet)
-        composerValue = TextFieldValue(text, TextRange(v.selection.min + snippet.length))
+        updateComposer(TextFieldValue(text, TextRange(v.selection.min + snippet.length)))
     }
 
     fun insertSmiley(code: String) = insertAtCursor(code)
@@ -735,7 +748,7 @@ class ChatViewModel @Inject constructor(
         val replacement = "@${user.username} "
         val text = composerValue.text.replaceRange(start, cursor, replacement)
         mentionCache[user.username] = user
-        composerValue = TextFieldValue(text, TextRange(start + replacement.length))
+        updateComposer(TextFieldValue(text, TextRange(start + replacement.length)))
         mentionJob?.cancel()
         mentionCandidates = emptyList()
         mentionStart = -1

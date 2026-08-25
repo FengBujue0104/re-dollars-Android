@@ -181,14 +181,18 @@ fun VideoThumbnail(
 ) {
     val cs = MaterialTheme.colorScheme
     val ctx = LocalContext.current
+    var loading by remember(url) { mutableStateOf(metaCache.get(url) == null) }
     val meta by produceState(metaCache.get(url), url) {
         if (value == null) {
             val dir = File(ctx.cacheDir, "vthumb").apply { mkdirs() }
             value = withContext(Dispatchers.IO) { loadVideoMeta(dir, url) }
                 ?.also { metaCache.put(url, it) }
         }
+        loading = false
     }
     val frame = meta?.frame
+    // Only show the progress state when there is nothing better to display yet.
+    val showLoading = loading && (frame == null || frame.width <= 0) && fallbackUrl.isNullOrBlank()
 
     Box(modifier, contentAlignment = Alignment.Center) {
         when {
@@ -206,9 +210,14 @@ fun VideoThumbnail(
             )
             else -> Box(
                 Modifier.fillMaxSize().background(cs.surfaceVariant),
-            ) { }
+                contentAlignment = Alignment.Center,
+            ) {
+                if (showLoading) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                }
+            }
         }
-        if (playBadge) {
+        if (playBadge && !showLoading) {
             Box(
                 Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape),
                 contentAlignment = Alignment.Center,

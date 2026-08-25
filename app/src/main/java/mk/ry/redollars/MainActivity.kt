@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -234,6 +235,15 @@ private fun RedollarsApp(
                     }
 
                     if (vm.showLogin) {
+                        FilledTonalIconButton(
+                            onClick = { webView?.reload() },
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .statusBarsPadding()
+                                .padding(8.dp),
+                        ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "刷新登录页")
+                        }
                         FilledTonalIconButton(
                             onClick = vm::dismissLogin,
                             modifier = Modifier
