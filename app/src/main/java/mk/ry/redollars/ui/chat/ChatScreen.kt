@@ -155,6 +155,7 @@ fun ChatScreen(
                 loadingOlder = vm.loadingOlder,
                 onLoadOlder = vm::loadOlder,
                 onSyncNewer = vm::syncNewer,
+                onJumpToMessage = vm::jumpToMessage,
                 onReact = vm::toggleReaction,
                 onReply = vm::startReply,
                 onEdit = vm::startEdit,
@@ -353,6 +354,7 @@ private fun MessageList(
     loadingOlder: Boolean,
     onLoadOlder: () -> Unit,
     onSyncNewer: () -> Unit = {},
+    onJumpToMessage: (Long) -> Unit = {},
     onReact: (Long, String) -> Unit,
     onReply: (MessageDto) -> Unit,
     onEdit: (MessageDto) -> Unit,
@@ -430,7 +432,7 @@ private fun MessageList(
             // Older than the loaded window: page back and re-run when messages change.
             messages.isNotEmpty() && target < oldestLoaded -> {
                 val gap = oldestLoaded - target
-                if (gap > 1000) vm.jumpToMessage(target) else onLoadOlder()
+                if (gap > 1000) onJumpToMessage(target) else onLoadOlder()
             }
             // Newer than the loaded window: catch up then retry (cold-start push)
             messages.isNotEmpty() && target > newestLoaded -> {
