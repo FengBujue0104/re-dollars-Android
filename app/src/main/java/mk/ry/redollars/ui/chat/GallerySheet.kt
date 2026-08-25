@@ -1,6 +1,5 @@
 package mk.ry.redollars.ui.chat
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
@@ -9,17 +8,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -36,7 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -44,6 +37,7 @@ import kotlinx.coroutines.launch
 import mk.ry.redollars.net.GalleryItemDto
 import mk.ry.redollars.net.GalleryResponse
 import mk.ry.redollars.ui.render.LocalImageViewer
+import mk.ry.redollars.ui.render.VideoThumbnail
 import mk.ry.redollars.ui.render.VideoViewerDialog
 
 /** Media wall over the backend /gallery endpoint (GalleryPanel.tsx): thumbnail grid,
@@ -132,35 +126,14 @@ fun GallerySheet(
  *  with a play badge; tapping opens the fullscreen player. */
 @Composable
 private fun GalleryVideoTile(item: GalleryItemDto, onClick: () -> Unit) {
-    val cs = MaterialTheme.colorScheme
-    Box(
-        Modifier
+    VideoThumbnail(
+        url = item.url,
+        fallbackUrl = item.thumbnailUrl,
+        contentDescription = "播放视频",
+        modifier = Modifier
             .padding(3.dp)
             .aspectRatio(1f)
             .clip(RoundedCornerShape(8.dp))
-            .background(cs.surfaceVariant)
             .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        val cover = item.thumbnailUrl
-        if (!cover.isNullOrBlank()) {
-            AsyncImage(
-                model = cover,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-        Box(
-            Modifier.size(40.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Filled.PlayArrow,
-                contentDescription = "播放视频",
-                tint = Color.White,
-                modifier = Modifier.size(24.dp),
-            )
-        }
-    }
+    )
 }

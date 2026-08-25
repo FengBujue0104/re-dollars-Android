@@ -30,6 +30,7 @@ import mk.ry.redollars.net.MessageDto
 import mk.ry.redollars.net.NotificationItem
 import mk.ry.redollars.net.ReactionDto
 import mk.ry.redollars.net.AppJson
+import mk.ry.redollars.net.AuthMeResult
 import mk.ry.redollars.net.Config
 import mk.ry.redollars.net.GalleryResponse
 import mk.ry.redollars.net.RestApi
@@ -369,15 +370,20 @@ class MessageRepository @Inject constructor(
         prefs.edit().putString(PREF_AUTH_TOKEN, token).apply()
     }
 
-    /** True when the stored token is valid on the backend AND belongs to [expectUid].
-     *  An invalid/mismatched token is dropped so we re-run OAuth next login. */
-    suspend fun validateAuthToken(expectUid: Long): Boolean {
-        val token = authToken ?: return false
-        val user = runCatching { rest.authMe(token) }.getOrNull()
-        if (user != null && user.id == expectUid) return true
-        // Distinguish "backend said no" from network failure: only drop on a real no.
-        if (user != null) setAuthToken(null)
-        return false
+    /** Outcome of validating the stored backend token against /auth/me. */
+    enum class AuthValidation { Valid, Invalid, NetworkError }
+
+    /** Validate the stored token: Valid when it matches [expectUid]; Invalid drops the
+     *  stale token (so the OAuth flow re-runs); NetworkError keeps it for a later retry. */
+    suspend fun validateAuthToken(expectUid: Long): AuthValidation {
+        val token = authToken ?: return AuthValidation.Invalid
+        return when (val r = rest.authMe(token)) {
+            is AuthMeResult.Valid ->
+                if (r.user.id == expectUid) AuthValidation.Valid
+                else { setAuthToken(null); AuthValidation.Invalid }
+            AuthMeResult.Invalid -> { setAuthToken(null); AuthValidation.Invalid }
+            AuthMeResult.Error -> AuthValidation.NetworkError
+        }
     }
 
     // ---- FCM push ----

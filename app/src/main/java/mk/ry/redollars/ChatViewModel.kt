@@ -130,6 +130,9 @@ class ChatViewModel @Inject constructor(
     var editing by mutableStateOf<EditingState?>(null); private set
     /** True once the backend Bearer token is validated for this session's uid. */
     var authReady by mutableStateOf(false); private set
+
+    /** Logged into Bangumi but the backend JWT is not currently valid. */
+    val backendAuthExpired: Boolean get() = session != null && !authReady
     /** Non-null asks the host to load the rymk-auth start URL in the login WebView. */
     var oauthRequestUrl by mutableStateOf<String?>(null); private set
     /** Non-null asks the host to reload the shared WebView to this URL — used to return
@@ -166,7 +169,9 @@ class ChatViewModel @Inject constructor(
         if (com.google.firebase.FirebaseApp.getApps(appContext).isEmpty()) return
         com.google.firebase.messaging.FirebaseMessaging.getInstance().token
             .addOnSuccessListener { token ->
-                viewModelScope.launch { repo.registerPushToken(token) }
+                viewModelScope.launch {
+                    if (ensureBackendAuth()) repo.registerPushToken(token)
+                }
             }
     }
 
@@ -212,19 +217,54 @@ class ChatViewModel @Inject constructor(
             // drive the rymk-auth flow in the login WebView, which must be visible so the
             // user can complete the bgm.tv login/authorize it redirects through. The
             // captured JWT is delivered back via onAuthToken.
-            if (repo.validateAuthToken(info.uid)) {
-                authReady = true
-                showLogin = false
-                log("Backend auth ready (stored token)")
-                registerPush()
-            } else {
-                val nonce = java.util.UUID.randomUUID().toString()
-                authNonce = nonce
-                showLogin = true
-                oauthRequestUrl = mk.ry.redollars.net.Config.rymkAuthStartUrl(nonce)
-                log("Requesting rymk-auth authorization…")
+            when (repo.validateAuthToken(info.uid)) {
+                MessageRepository.AuthValidation.Valid -> {
+                    authReady = true
+                    showLogin = false
+                    log("Backend auth ready (stored token)")
+                    registerPush()
+                }
+                MessageRepository.AuthValidation.Invalid -> requestReauth()
+                MessageRepository.AuthValidation.NetworkError -> {
+                    authReady = false
+                    showLogin = false
+                    log("Backend auth validation failed (network); keeping stored token")
+                }
             }
         }
+    }
+
+    /** Trigger the rymk-auth OAuth flow to obtain a fresh backend JWT. Used both on
+     *  first login and to auto-recover when a stored token has expired mid-session. */
+    private fun requestReauth() {
+        if (authNonce != null) return
+        authNonce = java.util.UUID.randomUUID().toString()
+        showLogin = true
+        oauthRequestUrl = mk.ry.redollars.net.Config.rymkAuthStartUrl(authNonce!!)
+        authReady = false
+        log("Requesting rymk-auth authorization…")
+    }
+
+    /** Re-validate the stored backend token before a token-gated action (edit/delete).
+     *  On expiry it drops the token and opens the login WebView to auto-recover auth. */
+    private suspend fun ensureBackendAuth(): Boolean {
+        val uid = session?.uid ?: return false
+        when (repo.validateAuthToken(uid)) {
+            MessageRepository.AuthValidation.Valid -> {
+                authReady = true
+                return true
+            }
+            MessageRepository.AuthValidation.Invalid -> {
+                authReady = false
+                requestReauth()
+                sendStatus = "授权已过期，请在弹出的登录页完成授权后重试"
+            }
+            MessageRepository.AuthValidation.NetworkError -> {
+                authReady = false
+                sendStatus = "无法连接服务器，请稍后重试"
+            }
+        }
+        return false
     }
 
     /** JWT captured from the rymk-auth popup (the `rymk_auth` postMessage in auth.ts),
@@ -240,7 +280,7 @@ class ChatViewModel @Inject constructor(
             authNonce = null
             oauthRequestUrl = null
             repo.setAuthToken(token)
-            authReady = repo.validateAuthToken(session?.uid ?: 0)
+            authReady = repo.validateAuthToken(session?.uid ?: 0) == MessageRepository.AuthValidation.Valid
             showLogin = false
             // rymk-auth left the shared WebView on bgm.tv/auth.ry.mk; return it to the
             // Bangumi origin so buildPostJs's same-origin fetch works.
@@ -785,6 +825,7 @@ class ChatViewModel @Inject constructor(
     fun submitEdit(text: String) {
         val edit = editing ?: return
         viewModelScope.launch {
+            if (!ensureBackendAuth()) return@launch
             sendStatus = "Saving edit…"
             val body = (edit.hiddenQuote ?: "") + transformMentions(text)
             val ok = repo.editMessage(edit.id, body)
@@ -798,6 +839,7 @@ class ChatViewModel @Inject constructor(
 
     fun deleteMessage(id: Long) {
         viewModelScope.launch {
+            if (!ensureBackendAuth()) return@launch
             if (repo.deleteMessage(id)) setDebugStatus("Deleted (id=$id)") else sendStatus = "Delete failed"
         }
     }
@@ -835,7 +877,22 @@ class ChatViewModel @Inject constructor(
             val ok = obj?.get("ok")?.jsonPrimitive?.booleanOrNull ?: false
             val status = obj?.get("status")?.jsonPrimitive?.intOrNull ?: -1
             val head = obj?.get("head")?.jsonPrimitive?.contentOrNull.orEmpty().replace("\n", " ")
-            log("WebView POST -> ok=$ok status=$status head=${head.take(80)}")
+            val url = obj?.get("url")?.jsonPrimitive?.contentOrNull.orEmpty()
+            log("WebView POST -> ok=$ok status=$status url=${url.take(80)} head=${head.take(80)}")
+
+            // Bangumi cookie expired mid-session: the fetch lands on /login (or 401/403).
+            // Restore the unsent draft and re-open the login overlay for a clean retry.
+            if (status == 401 || status == 403 || url.contains("/login", ignoreCase = true)) {
+                if (pendingText.isNotBlank()) setComposer(pendingText)
+                pendingText = ""
+                session = null
+                authReady = false
+                sendStatus = "登录已过期，请重新登录后再发"
+                showLogin = true
+                webViewReloadUrl = "${mk.ry.redollars.net.Config.BGM_HOST}/login"
+                return@launch
+            }
+
             if (!ok) {
                 sendStatus = "Post failed (status=$status)"
                 return@launch

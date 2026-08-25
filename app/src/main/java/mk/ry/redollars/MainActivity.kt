@@ -287,7 +287,7 @@ private fun buildPostJs(text: String): String {
               body: 'message=' + encodeURIComponent($msg)
             })
             .then(function(r){ return r.text().then(function(t){
-              AndroidPost.deliver(JSON.stringify({ ok: r.ok, status: r.status, len: t.length, head: t.slice(0, 160) }));
+              AndroidPost.deliver(JSON.stringify({ ok: r.ok, status: r.status, url: r.url, len: t.length, head: t.slice(0, 160) }));
             }); })
             .catch(function(e){ AndroidPost.deliver(JSON.stringify({ ok: false, status: -1, err: String(e) })); });
           } catch (e) { AndroidPost.deliver(JSON.stringify({ ok: false, status: -2, err: String(e) })); }

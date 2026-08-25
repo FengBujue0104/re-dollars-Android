@@ -83,6 +83,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import mk.ry.redollars.ui.render.LocalAudioPlayer
 import mk.ry.redollars.ui.render.LocalImageViewer
 import mk.ry.redollars.ui.render.Smilies
+import mk.ry.redollars.ui.render.VideoThumbnail
 import mk.ry.redollars.ui.render.VideoViewerDialog
 import mk.ry.redollars.ui.render.avatarUrl
 
@@ -397,11 +398,10 @@ private fun MediaPreviewRow(
                 contentAlignment = Alignment.Center,
             ) {
                 if (p.isVideo) {
-                    Icon(
-                        Icons.Filled.PlayArrow,
+                    VideoThumbnail(
+                        url = p.url,
                         contentDescription = "预览视频",
-                        tint = cs.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 } else {
                     AsyncImage(

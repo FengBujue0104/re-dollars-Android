@@ -102,6 +102,7 @@ fun ChatScreen(
                 onGallery = { showGallery = true },
                 onBlockManager = { showBlockManager = true },
                 onNotifications = { showNotifications = true },
+                backendAuthExpired = vm.backendAuthExpired,
                 onReconnect = vm::reconnect,
                 // Logged in: open the account sheet (status + logout). Logged out: the
                 // login WebView, as before.
@@ -246,6 +247,7 @@ private fun ChatTopBar(
     onGallery: () -> Unit,
     onBlockManager: () -> Unit,
     onNotifications: () -> Unit,
+    backendAuthExpired: Boolean,
     onReconnect: () -> Unit,
     onAccount: () -> Unit,
 ) {
@@ -258,6 +260,13 @@ private fun ChatTopBar(
                     fontWeight = FontWeight.Bold,
                 )
                 StatusLine(connected, onlineCount, onReconnect)
+                if (backendAuthExpired) {
+                    Text(
+                        text = "后端授权未验证",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         },
         actions = {

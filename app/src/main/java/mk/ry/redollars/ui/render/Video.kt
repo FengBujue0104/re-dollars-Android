@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -58,6 +59,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mk.ry.redollars.net.Config
@@ -163,6 +165,63 @@ fun VideoBlockView(url: String) {
     }
 
     if (open) VideoViewerDialog(url) { open = false }
+}
+
+/** Shared first-frame thumbnail for a video clip: shows the extracted first frame
+ *  (disk/memory cached via [loadVideoMeta]), falling back to [fallbackUrl] (e.g. the
+ *  backend poster) while loading, then a neutral placeholder with a play badge. Used
+ *  by the media wall and composer preview bubbles. */
+@Composable
+fun VideoThumbnail(
+    url: String,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+    playBadge: Boolean = true,
+    fallbackUrl: String? = null,
+) {
+    val cs = MaterialTheme.colorScheme
+    val ctx = LocalContext.current
+    val meta by produceState(metaCache.get(url), url) {
+        if (value == null) {
+            val dir = File(ctx.cacheDir, "vthumb").apply { mkdirs() }
+            value = withContext(Dispatchers.IO) { loadVideoMeta(dir, url) }
+                ?.also { metaCache.put(url, it) }
+        }
+    }
+    val frame = meta?.frame
+
+    Box(modifier, contentAlignment = Alignment.Center) {
+        when {
+            frame != null && frame.width > 0 -> Image(
+                bitmap = frame,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            fallbackUrl != null -> AsyncImage(
+                model = fallbackUrl,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            else -> Box(
+                Modifier.fillMaxSize().background(cs.surfaceVariant),
+            ) { }
+        }
+        if (playBadge) {
+            Box(
+                Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
 }
 
 private class VideoMeta(val frame: ImageBitmap, val durationMs: Long)

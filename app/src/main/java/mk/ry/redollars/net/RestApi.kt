@@ -9,7 +9,16 @@ import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import okhttp3.MediaType.Companion.toMediaType
+
+/** Outcome of GET /auth/me: distinguish a definitively-invalid token from a
+ *  transient network failure so we never drop a good token on a flaky connection. */
+sealed interface AuthMeResult {
+    data class Valid(val user: AuthUserDto) : AuthMeResult
+    data object Invalid : AuthMeResult
+    data object Error : AuthMeResult
+}
 
 /** Read-only backend REST calls (no auth needed). */
 class RestApi(private val client: OkHttpClient) {
@@ -62,19 +71,30 @@ class RestApi(private val client: OkHttpClient) {
         }
     }
 
-    /** GET /api/v1/auth/me — validate a backend Bearer token, returning its user. */
-    suspend fun authMe(token: String): AuthUserDto? = withContext(Dispatchers.IO) {
+    /** GET /api/v1/auth/me — validate a backend Bearer token, returning its user.
+     *  Tri-state so callers can tell an expired token (401/403) from a network error. */
+    suspend fun authMe(token: String): AuthMeResult = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("${Config.BACKEND_API_URL}/auth/me")
             .header("User-Agent", Config.USER_AGENT)
             .header("Authorization", "Bearer $token")
             .get()
             .build()
-        client.newCall(req).execute().use { res ->
-            val body = res.body?.string().orEmpty()
-            if (!res.isSuccessful || body.isBlank()) return@withContext null
-            runCatching { AppJson.decodeFromString<AuthMeResponse>(body) }.getOrNull()
-                ?.takeIf { it.status }?.user
+        try {
+            client.newCall(req).execute().use { res ->
+                val body = res.body?.string().orEmpty()
+                when {
+                    res.code == 401 || res.code == 403 -> AuthMeResult.Invalid
+                    !res.isSuccessful || body.isBlank() -> AuthMeResult.Error
+                    else -> {
+                        val user = runCatching { AppJson.decodeFromString<AuthMeResponse>(body) }
+                            .getOrNull()?.takeIf { it.status }?.user
+                        if (user != null) AuthMeResult.Valid(user) else AuthMeResult.Invalid
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            AuthMeResult.Error
         }
     }
 

@@ -28,9 +28,18 @@ class UploadApi(base: OkHttpClient) {
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    /** [filePart] carries its own content type; it is streamed, never buffered whole. */
-    suspend fun uploadImage(filePart: RequestBody, fileName: String, token: String?): UploadResult =
-        upload(Config.UPLOAD_API_URL, "image", filePart, fileName, token)
+    /** [filePart] carries its own content type; it is streamed, never buffered whole.
+     *  Image uploads self-heal when the bearer token is stale/expired: the upload
+     *  server accepts anonymous (no-header) image uploads, so a 401/timeout with the
+     *  header falls back to one retry without it. */
+    suspend fun uploadImage(filePart: RequestBody, fileName: String, token: String?): UploadResult {
+        if (token != null) {
+            val first = upload(Config.UPLOAD_API_URL, "image", filePart, fileName, token)
+            if (first.url != null) return first
+            return upload(Config.UPLOAD_API_URL, "image", filePart, fileName, null)
+        }
+        return upload(Config.UPLOAD_API_URL, "image", filePart, fileName, null)
+    }
 
     suspend fun uploadFile(filePart: RequestBody, fileName: String): UploadResult =
         upload(Config.FILE_UPLOAD_API_URL, "file", filePart, fileName, null)
