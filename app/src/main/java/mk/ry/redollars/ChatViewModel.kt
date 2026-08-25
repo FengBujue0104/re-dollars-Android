@@ -226,12 +226,17 @@ class ChatViewModel @Inject constructor(
     }
 
     fun onLoggedIn(info: SessionInfo) {
-        // A rymk-auth request is already in flight for this same user. The OAuth redirect
-        // chain runs through logged-in bgm.tv pages (/oauth/authorize) that still expose
-        // CHOBITS_UID, and the login WebView can be recreated mid-flow — either re-fires
-        // this probe. Restarting would mint a fresh nonce and get the returning JWT
-        // rejected as a state mismatch, so ignore the re-detection and let it finish.
-        if (authNonce != null && session?.uid == info.uid) return
+        // Dedupe re-fire from WebView recreation mid-OAuth, but allow a fresh reauth
+        // if the previous one is stale (e.g. timeout or user dismissed). Only skip
+        // when the same uid's rymk-auth is still actively loading.
+        if (authNonce != null && session?.uid == info.uid && oauthRequestUrl != null) {
+            return
+        }
+        // If previous reauth is stale (authNonce set but no oauthRequestUrl), clear it
+        if (authNonce != null && oauthRequestUrl == null) {
+            authNonce = null
+            reauthTimeoutJob?.cancel(); reauthTimeoutJob = null
+        }
         session = info
         // Remember we have a session so future launches auto-login silently on open.
         sessionHintPrefs.edit().putBoolean("had_session", true).apply()
@@ -331,20 +336,47 @@ class ChatViewModel @Inject constructor(
     fun onAuthToken(token: String, state: String?) {
         viewModelScope.launch(Dispatchers.Main.immediate) {
             if (authNonce == null || state != authNonce) {
-                log("rymk-auth: ignoring token with mismatched state")
+                log("rymk-auth: ignoring token with mismatched state (expected $authNonce, got $state)")
                 return@launch
             }
             reauthTimeoutJob?.cancel(); reauthTimeoutJob = null
             authNonce = null
             oauthRequestUrl = null
+            val uidForValidation = session?.uid ?: run {
+                log("rymk-auth: session not ready, deferring validation, token stored")
+                repo.setAuthToken(token)
+                authReady = false
+                showLogin = false
+                webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
+                return@launch
+            }
             repo.setAuthToken(token)
-            authReady = repo.validateAuthToken(session?.uid ?: 0) == MessageRepository.AuthValidation.Valid
-            showLogin = false
-            // rymk-auth left the shared WebView on bgm.tv/auth.ry.mk; return it to the
-            // Bangumi origin so buildPostJs's same-origin fetch works.
-            webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
-            log("Backend auth ${if (authReady) "ready (rymk JWT)" else "validation FAILED"}")
-            if (authReady) registerPush()
+            when (val result = repo.validateAuthTokenWithRetry(uidForValidation)) {
+                MessageRepository.AuthValidation.Valid -> {
+                    authReady = true
+                    showLogin = false
+                    webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
+                    log("Backend auth ready (rymk JWT)")
+                    registerPush()
+                    startPeriodicAuthCheck()
+                }
+                MessageRepository.AuthValidation.Invalid -> {
+                    authReady = false
+                    showLogin = true
+                    webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
+                    log("Backend auth validation FAILED (token rejected)")
+                    sendStatus = "授权失败，请重试"
+                    authNonce = null
+                }
+                MessageRepository.AuthValidation.NetworkError -> {
+                    authReady = false
+                    showLogin = false
+                    webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
+                    log("Backend auth validation network error, token kept for retry")
+                    sendStatus = "网络波动，授权稍后自动重试"
+                    startPeriodicAuthCheck()
+                }
+            }
         }
     }
 
