@@ -408,8 +408,13 @@ class MessageRepository @Inject constructor(
     private var authToken: String? = prefs.getString(PREF_AUTH_TOKEN, null)
 
     fun setAuthToken(token: String?) {
+        val wasNull = authToken == null
         authToken = token
         prefs.edit().putString(PREF_AUTH_TOKEN, token).apply()
+        // If token became valid after being null, ensure WS is re-identified
+        if (wasNull && token != null && ownUid != 0L) {
+            ws.connect(ownUid, null, null)
+        }
     }
 
     /** Outcome of validating the stored backend token against /auth/me. */
@@ -428,6 +433,21 @@ class MessageRepository @Inject constructor(
         }
     }
 
+    /** Validate with exponential backoff retry for transient network errors. Keeps token on final NetworkError. */
+    suspend fun validateAuthTokenWithRetry(expectUid: Long, maxRetries: Int = 3): AuthValidation {
+        var attempt = 0
+        var delayMs = 1000L
+        while (true) {
+            val result = validateAuthToken(expectUid)
+            if (result != AuthValidation.NetworkError || attempt >= maxRetries) return result
+            attempt++
+            // Full jitter + decorrelated
+            val jitter = kotlin.random.Random.nextLong(0, 1000) + kotlin.random.Random.nextLong(0, delayMs / 2)
+            kotlinx.coroutines.delay(delayMs + jitter)
+            delayMs = (delayMs * 2 + kotlin.random.Random.nextLong(0, 1000)).coerceAtMost(16000L)
+        }
+    }
+
     // ---- FCM push ----
 
     /** Jump target set by MainActivity when a push notification is tapped. */
@@ -437,8 +457,22 @@ class MessageRepository @Inject constructor(
      *  the OAuth token exists; called again on every auth-ready and token rotation. */
     suspend fun registerPushToken(fcmToken: String) {
         val token = authToken ?: return
-        val ok = runCatching { rest.registerPush(fcmToken, token) }.getOrDefault(false)
-        log(if (ok) "Push token registered" else "Push token registration failed")
+        // Retry with backoff for transient failures, decoupled from main auth flow
+        var attempt = 0
+        var delayMs = 1000L
+        while (attempt < 3) {
+            val ok = runCatching { rest.registerPush(fcmToken, token) }.getOrDefault(false)
+            if (ok) {
+                log("Push token registered")
+                return
+            }
+            attempt++
+            if (attempt < 3) {
+                kotlinx.coroutines.delay(delayMs + kotlin.random.Random.nextLong(0, 500))
+                delayMs *= 2
+            }
+        }
+        log("Push token registration failed after retries")
     }
 
     /** Edit own message; Room is patched immediately, the WS echo re-enriches it. */

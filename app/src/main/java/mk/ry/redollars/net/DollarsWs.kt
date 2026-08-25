@@ -74,6 +74,13 @@ class DollarsWs(
         open()
     }
 
+    /** Re-identify with current uid without full reconnect, for token refresh */
+    fun reidentify() {
+        if (currentSocket != null && !intentionallyClosed) {
+            currentSocket?.send("{\"type\":\"identify\",\"uid\":\"$uid\"}")
+        }
+    }
+
     /** Broadcast our typing state (server attaches the joined user identity). */
     fun sendTyping(typing: Boolean) {
         currentSocket?.send("""{"type":"${if (typing) "typing_start" else "typing_stop"}"}""")
@@ -133,10 +140,16 @@ class DollarsWs(
         if (intentionallyClosed || !active) return
         reconnectJob?.cancel()
         attempt++
-        val backoff = (1000L shl attempt.coerceAtMost(5)).coerceAtMost(30_000L) // 2s,4s,…,30s cap
+        // Exponential backoff with full jitter: base 2s, cap 60s, jitter 0-1000ms + decorrelated
+        val base = (1000L shl attempt.coerceAtMost(6)).coerceAtMost(60_000L)
+        val jitter = Random.nextLong(0, 1000) + Random.nextLong(0, base / 4)
+        val backoff = (base + jitter).coerceAtMost(60_000L)
+        // Circuit breaker: after 10 attempts, pause 2 minutes
+        val isCircuitOpen = attempt > 10
+        val finalDelay = if (isCircuitOpen) 120_000L else backoff
         reconnectJob = scope.launch {
-            onEvent(WsEvent.Log("WS reconnect in ${backoff}ms (attempt $attempt)"))
-            delay(backoff + Random.nextLong(0, 400))
+            onEvent(WsEvent.Log("WS reconnect in ${finalDelay}ms (attempt $attempt${if (isCircuitOpen) " circuit-open" else ""})"))
+            delay(finalDelay)
             if (!intentionallyClosed && active) open()
         }
     }

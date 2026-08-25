@@ -253,18 +253,20 @@ class ChatViewModel @Inject constructor(
             // drive the rymk-auth flow in the login WebView, which must be visible so the
             // user can complete the bgm.tv login/authorize it redirects through. The
             // captured JWT is delivered back via onAuthToken.
-            when (repo.validateAuthToken(info.uid)) {
+            when (repo.validateAuthTokenWithRetry(info.uid)) {
                 MessageRepository.AuthValidation.Valid -> {
                     authReady = true
                     showLogin = false
                     log("Backend auth ready (stored token)")
                     registerPush()
+                    startPeriodicAuthCheck()
                 }
                 MessageRepository.AuthValidation.Invalid -> requestReauth()
                 MessageRepository.AuthValidation.NetworkError -> {
                     authReady = false
                     showLogin = false
                     log("Backend auth validation failed (network); keeping stored token")
+                    startPeriodicAuthCheck()
                 }
             }
         }
@@ -272,6 +274,8 @@ class ChatViewModel @Inject constructor(
 
     /** Trigger the rymk-auth OAuth flow to obtain a fresh backend JWT. Used both on
      *  first login and to auto-recover when a stored token has expired mid-session. */
+    private var reauthTimeoutJob: Job? = null
+
     private fun requestReauth() {
         if (authNonce != null) return
         authNonce = java.util.UUID.randomUUID().toString()
@@ -279,13 +283,30 @@ class ChatViewModel @Inject constructor(
         oauthRequestUrl = mk.ry.redollars.net.Config.rymkAuthStartUrl(authNonce!!)
         authReady = false
         log("Requesting rymk-auth authorization…")
+        reauthTimeoutJob?.cancel()
+        reauthTimeoutJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(60_000L)
+            if (authNonce != null) {
+                log("rymk-auth timeout, showing retry")
+                sendStatus = "授权超时，请点击刷新重试"
+            }
+        }
+    }
+
+    fun retryAuth() {
+        if (authNonce == null) {
+            requestReauth()
+        } else {
+            oauthRequestUrl = mk.ry.redollars.net.Config.rymkAuthStartUrl(authNonce!!)
+            log("Retrying rymk-auth…")
+        }
     }
 
     /** Re-validate the stored backend token before a token-gated action (edit/delete).
      *  On expiry it drops the token and opens the login WebView to auto-recover auth. */
     private suspend fun ensureBackendAuth(): Boolean {
         val uid = session?.uid ?: return false
-        when (repo.validateAuthToken(uid)) {
+        when (repo.validateAuthTokenWithRetry(uid)) {
             MessageRepository.AuthValidation.Valid -> {
                 authReady = true
                 return true
@@ -313,6 +334,7 @@ class ChatViewModel @Inject constructor(
                 log("rymk-auth: ignoring token with mismatched state")
                 return@launch
             }
+            reauthTimeoutJob?.cancel(); reauthTimeoutJob = null
             authNonce = null
             oauthRequestUrl = null
             repo.setAuthToken(token)
@@ -338,9 +360,31 @@ class ChatViewModel @Inject constructor(
      *  won't silently auto-login), clear Bangumi cookies so the WebView session is gone,
      *  reset the shared WebView to a logged-out page, and fall back to the anonymous
      *  read connection. Posting/edit/delete lock again until the user logs back in. */
+    private fun startPeriodicAuthCheck() {
+        periodicAuthJob?.cancel()
+        periodicAuthJob = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30 * 60 * 1000L) // 30 minutes
+                val uid = session?.uid ?: continue
+                when (repo.validateAuthTokenWithRetry(uid, maxRetries = 1)) {
+                    MessageRepository.AuthValidation.Invalid -> {
+                        log("Periodic auth check: token invalid, requesting reauth")
+                        requestReauth()
+                        break
+                    }
+                    MessageRepository.AuthValidation.NetworkError -> {
+                        log("Periodic auth check: network error, will retry next cycle")
+                    }
+                    else -> { /* Valid, continue */ }
+                }
+            }
+        }
+    }
+
     fun logout() {
         loginJob?.cancel(); loginJob = null
         authValidationJob?.cancel(); authValidationJob = null
+        periodicAuthJob?.cancel(); periodicAuthJob = null
         repo.clearAccountState()
         repo.setAuthToken(null)
         sessionHintPrefs.edit().putBoolean("had_session", false).apply()
@@ -370,6 +414,7 @@ class ChatViewModel @Inject constructor(
      *  Bangumi session already exists, return the WebView to the Bangumi origin so
      *  posting still works (rymk-auth may have navigated it to bgm.tv/auth.ry.mk). */
     fun dismissLogin() {
+        reauthTimeoutJob?.cancel(); reauthTimeoutJob = null
         showLogin = false
         oauthRequestUrl = null
         authNonce = null
@@ -379,6 +424,7 @@ class ChatViewModel @Inject constructor(
     // ---- Composer typing signals: start immediately, stop after 2.5s idle or on send. ----
     private var loginJob: Job? = null
     private var authValidationJob: Job? = null
+    private var periodicAuthJob: Job? = null
     private var typingStopJob: Job? = null
     private var typingActive = false
 
