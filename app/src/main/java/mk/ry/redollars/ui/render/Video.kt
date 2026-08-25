@@ -340,6 +340,7 @@ fun VideoViewerDialog(url: String, onClose: () -> Unit) {
                     Text(msg, color = Color.White, textAlign = TextAlign.Center)
                     TextButton(onClick = {
                         runCatching {
+                            if (!url.startsWith("http://") && !url.startsWith("https://")) return@runCatching
                             ctx.startActivity(
                                 Intent(Intent.ACTION_VIEW, Uri.parse(url))
                                     .setDataAndType(Uri.parse(url), "video/*")

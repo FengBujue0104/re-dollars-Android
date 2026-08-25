@@ -565,7 +565,7 @@ class ChatViewModel @Inject constructor(
                     tag = res.url?.let { "[img]$it[/img]" }.orEmpty()
                 } else {
                     val size = withContext(Dispatchers.IO) { contentLength(uri) }
-                    res = if (size > MAX_FILE_BYTES) UploadResult(error = "Too large (max 200MB)")
+                    res = if (size != -1L && size > MAX_FILE_BYTES) UploadResult(error = "Too large (max 200MB)")
                     else repo.uploadFile(uriRequestBody(uri, mime, size), name)
                     tag = res.url?.let {
                         when {
@@ -678,7 +678,11 @@ class ChatViewModel @Inject constructor(
         val resolver = appContext.contentResolver
         val mime = resolver.getType(uri) ?: "image/jpeg"
         val size = contentLength(uri)
-        if (size > MAX_IMAGE_BYTES) return@withContext UploadResult(error = "Too large (max 50MB)")
+        if (size != -1L && size > MAX_IMAGE_BYTES) return@withContext UploadResult(error = "Too large (max 50MB)")
+        if (size == -1L) {
+            val probe = runCatching { appContext.contentResolver.openInputStream(uri)?.use { it.readBytes().size.toLong() } }.getOrNull() ?: -1L
+            if (probe != -1L && probe > MAX_IMAGE_BYTES) return@withContext UploadResult(error = "Too large (max 50MB)")
+        }
         val ext = when (mime) {
             "image/png" -> "png"
             "image/gif" -> "gif"
@@ -707,7 +711,17 @@ class ChatViewModel @Inject constructor(
             override fun writeTo(sink: BufferedSink) {
                 val input = appContext.contentResolver.openInputStream(uri)
                     ?: throw IOException("Could not read file")
-                input.source().use { sink.writeAll(it) }
+                var written = 0L
+                val hardCap = MAX_FILE_BYTES.coerceAtLeast(MAX_IMAGE_BYTES).toLong()
+                input.source().use { src ->
+                    val buf = okio.Buffer()
+                    var read: Long
+                    while (src.read(buf, 8192).also { read = it } != -1L) {
+                        written += read
+                        if (written > hardCap) throw IOException("File too large")
+                        sink.write(buf, read)
+                    }
+                }
             }
         }
 

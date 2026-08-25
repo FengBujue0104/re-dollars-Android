@@ -101,7 +101,18 @@ private val ALLOWED_NAV_HOSTS = setOf("bgm.tv", "bangumi.tv", "chii.in", "auth.r
 private fun isAllowedNavigation(uri: Uri): Boolean {
     if (uri.scheme != "http" && uri.scheme != "https") return false
     val host = uri.host?.lowercase() ?: return false
-    return host in ALLOWED_NAV_HOSTS || ALLOWED_NAV_HOSTS.any { host.endsWith(".$it") }
+    val allowedHost = host in ALLOWED_NAV_HOSTS || ALLOWED_NAV_HOSTS.any { host.endsWith(".$it") }
+    if (!allowedHost) return false
+    // For bgm.tv family, restrict to known app flows to reduce XSS surface
+    if (host.endsWith("bgm.tv") || host.endsWith("bangumi.tv") || host.endsWith("chii.in")) {
+        val path = uri.path ?: "/"
+        val allowedPrefixes = listOf("/login", "/dollars", "/oauth", "/user", "/group", "/subject", "/character", "/person", "/ep")
+        if (path == "/" || allowedPrefixes.any { path.startsWith(it) }) return true
+        // Allow root and static assets for login page
+        if (path.startsWith("/js/") || path.startsWith("/css/") || path.startsWith("/img/")) return true
+        return false
+    }
+    return true
 }
 
 private data class Parsed(val uid: Long?, val name: String?, val formhash: String?)
@@ -143,20 +154,30 @@ private fun parseAuthMessage(raw: String): AuthMessage? {
 }
 
 /** Bridge so the in-page fetch() can report its async result back to Kotlin. */
-private class PostBridge(private val cb: (String) -> Unit) {
+private class PostBridge(private val view: WebView, private val cb: (String) -> Unit) {
     @JavascriptInterface
-    fun deliver(json: String) = cb(json)
+    fun deliver(json: String) {
+        val url = view.url ?: return
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
+        if (!isAllowedNavigation(uri) && !url.startsWith(Config.BGM_HOST) && !url.startsWith(AUTH_ORIGIN)) return
+        cb(json)
+    }
 }
 
 /** Bridge for the rymk-auth flow. [onMessage] receives the postMessage payload from the
  *  opener shim; [onDiag] surfaces the shim's own trace into the debug log. Both fire on a
  *  JS/binder thread, so the ViewModel marshals onto Main before touching state. */
 private class AuthBridge(
+    private val view: WebView,
     private val onMessage: (String) -> Unit,
     private val onDiag: (String) -> Unit,
 ) {
     @JavascriptInterface
-    fun deliver(json: String) = onMessage(json)
+    fun deliver(json: String) {
+        val url = view.url ?: return
+        if (!url.startsWith(AUTH_ORIGIN)) return
+        onMessage(json)
+    }
 
     @JavascriptInterface
     fun log(msg: String) = onDiag(msg)
@@ -190,9 +211,15 @@ fun BangumiWebView(
                 cm.setAcceptThirdPartyCookies(this, true)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                addJavascriptInterface(PostBridge(onPostResult), "AndroidPost")
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
+                settings.allowFileAccessFromFileURLs = false
+                settings.allowUniversalAccessFromFileURLs = false
+                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                addJavascriptInterface(PostBridge(this, onPostResult), "AndroidPost")
                 addJavascriptInterface(
                     AuthBridge(
+                        view = this,
                         onMessage = { raw ->
                             onLog("rymk-auth payload: ${raw.take(120)}")
                             when (val msg = parseAuthMessage(raw)) {

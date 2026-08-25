@@ -59,9 +59,11 @@ class UploadApi(base: OkHttpClient) {
             .setType(MultipartBody.FORM)
             .addFormDataPart(field, fileName, filePart)
             .build()
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
         val req = Request.Builder()
             .url(endpoint)
             .header("User-Agent", Config.USER_AGENT)
+            .header("X-Idempotency-Key", idempotencyKey)
             .apply { if (token != null) header("Authorization", "Bearer $token") }
             .post(body)
             .build()
