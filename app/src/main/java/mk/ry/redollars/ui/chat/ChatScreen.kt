@@ -428,7 +428,10 @@ private fun MessageList(
                 onJumpHandled()
             }
             // Older than the loaded window: page back and re-run when messages change.
-            messages.isNotEmpty() && target < oldestLoaded -> onLoadOlder()
+            messages.isNotEmpty() && target < oldestLoaded -> {
+                val gap = oldestLoaded - target
+                if (gap > 1000) vm.jumpToMessage(target) else onLoadOlder()
+            }
             // Newer than the loaded window: catch up then retry (cold-start push)
             messages.isNotEmpty() && target > newestLoaded -> {
                 onSyncNewer()

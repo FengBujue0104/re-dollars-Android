@@ -840,6 +840,7 @@ class ChatViewModel @Inject constructor(
     suspend fun fetchGallery(offset: Int) = repo.fetchGallery(offset)
 
     fun syncNewer() { viewModelScope.launch { repo.syncNewer() } }
+    fun jumpToMessage(id: Long) { viewModelScope.launch { if (!repo.jumpToMessage(id)) sendStatus = "无法定位该消息" } }
 
     /** Page one more window of history above the oldest displayed message. */
     fun loadOlder() {

@@ -101,18 +101,7 @@ private val ALLOWED_NAV_HOSTS = setOf("bgm.tv", "bangumi.tv", "chii.in", "auth.r
 private fun isAllowedNavigation(uri: Uri): Boolean {
     if (uri.scheme != "http" && uri.scheme != "https") return false
     val host = uri.host?.lowercase() ?: return false
-    val allowedHost = host in ALLOWED_NAV_HOSTS || ALLOWED_NAV_HOSTS.any { host.endsWith(".$it") }
-    if (!allowedHost) return false
-    // For bgm.tv family, restrict to known app flows to reduce XSS surface
-    if (host.endsWith("bgm.tv") || host.endsWith("bangumi.tv") || host.endsWith("chii.in")) {
-        val path = uri.path ?: "/"
-        val allowedPrefixes = listOf("/login", "/dollars", "/oauth", "/user", "/group", "/subject", "/character", "/person", "/ep")
-        if (path == "/" || allowedPrefixes.any { path.startsWith(it) }) return true
-        // Allow root and static assets for login page
-        if (path.startsWith("/js/") || path.startsWith("/css/") || path.startsWith("/img/")) return true
-        return false
-    }
-    return true
+    return host in ALLOWED_NAV_HOSTS || ALLOWED_NAV_HOSTS.any { host.endsWith(".$it") }
 }
 
 private data class Parsed(val uid: Long?, val name: String?, val formhash: String?)

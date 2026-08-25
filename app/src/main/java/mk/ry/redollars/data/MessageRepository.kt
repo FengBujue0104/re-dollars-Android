@@ -540,6 +540,18 @@ class MessageRepository @Inject constructor(
      * visible. Cache-first: only hits REST when the cache runs out. Returns the number
      * of additional rows now available, or -1 when history is exhausted.
      */
+    suspend fun jumpToMessage(targetId: Long): Boolean {
+        return try {
+            val before = runCatching { rest.fetchHistory(targetId + PAGE_SIZE, PAGE_SIZE) }.getOrDefault(emptyList())
+            val after = runCatching { rest.fetchNewer(targetId - 1, PAGE_SIZE) }.getOrDefault(emptyList())
+            val window = (before + after).sortedBy { it.id }
+            if (window.isEmpty()) return false
+            dao.replaceAll(window.map { it.toEntity() })
+            displayLimit.value = INITIAL_WINDOW.coerceAtLeast(window.size + 20)
+            true
+        } catch (_: Exception) { false }
+    }
+
     suspend fun loadOlder(beforeId: Long): Int {
         val cached = dao.countOlderThan(beforeId)
         if (cached >= PAGE_SIZE) {

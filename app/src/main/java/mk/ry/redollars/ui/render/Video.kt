@@ -250,6 +250,7 @@ private fun formatDuration(ms: Long): String {
  *  so app restarts don't refetch. Null when the host/container defeats the retriever —
  *  the caller keeps the plain card. */
 private fun loadVideoMeta(dir: File, url: String): VideoMeta? = runCatching {
+    if (!url.startsWith("http://") && !url.startsWith("https://")) return@runCatching null
     val key = Integer.toHexString(url.hashCode())
     val jpg = File(dir, "$key.jpg")
     val dur = File(dir, "$key.dur")
@@ -261,11 +262,24 @@ private fun loadVideoMeta(dir: File, url: String): VideoMeta? = runCatching {
     }
     val retriever = MediaMetadataRetriever()
     try {
-        retriever.setDataSource(url, mapOf("User-Agent" to Config.BROWSER_UA))
+        // Timeout after 5s to avoid ANR on slow hosts
+        val success = runCatching {
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeoutOrNull(5000) {
+                    retriever.setDataSource(url, mapOf("User-Agent" to Config.BROWSER_UA))
+                    true
+                }
+            }
+        }.getOrNull() ?: false
+        if (!success) return@runCatching null
         val durationMs = retriever
             .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             ?.toLongOrNull() ?: 0L
-        val frame = retriever.frameAtTime ?: return@runCatching null
+        val frame = runCatching {
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeoutOrNull(3000) { retriever.frameAtTime }
+            }
+        }.getOrNull() ?: return@runCatching null
         runCatching {
             jpg.outputStream().use { frame.compress(Bitmap.CompressFormat.JPEG, 82, it) }
             dur.writeText(durationMs.toString())
