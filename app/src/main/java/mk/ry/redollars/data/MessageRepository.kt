@@ -543,7 +543,7 @@ class MessageRepository @Inject constructor(
     suspend fun loadOlder(beforeId: Long): Int {
         val cached = dao.countOlderThan(beforeId)
         if (cached >= PAGE_SIZE) {
-            displayLimit.value = (displayLimit.value + PAGE_SIZE).coerceAtMost(2000)
+            displayLimit.value += PAGE_SIZE
             return PAGE_SIZE
         }
         val fetched = runCatching { rest.fetchHistory(beforeId, PAGE_SIZE) }.getOrDefault(emptyList())
@@ -551,7 +551,7 @@ class MessageRepository @Inject constructor(
         log("History: +${fetched.size} fetched before id=$beforeId (cached older=$cached)")
         val available = cached + fetched.size
         if (available == 0) return -1
-        displayLimit.value = (displayLimit.value + available).coerceAtMost(2000)
+        displayLimit.value += available
         return available
     }
 

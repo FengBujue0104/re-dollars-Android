@@ -63,7 +63,6 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mk.ry.redollars.net.Config
-import java.security.MessageDigest
 import java.io.File
 
 /**
@@ -227,8 +226,7 @@ fun VideoThumbnail(
 
 private class VideoMeta(val frame: ImageBitmap, val durationMs: Long)
 
-private fun sha256Hex(s: String) = MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }.take(16)
-private val metaCache = object : LruCache<String, VideoMeta>(8 * 1024 * 1024) { override fun sizeOf(key: String, v: VideoMeta): Int = try { v.frame.width * v.frame.height * 4 } catch(_: Exception){ 256*256*4 } }
+private val metaCache = LruCache<String, VideoMeta>(48)
 
 private fun formatDuration(ms: Long): String {
     val totalSec = (ms / 1000).coerceAtLeast(0)
@@ -239,7 +237,7 @@ private fun formatDuration(ms: Long): String {
  *  so app restarts don't refetch. Null when the host/container defeats the retriever —
  *  the caller keeps the plain card. */
 private fun loadVideoMeta(dir: File, url: String): VideoMeta? = runCatching {
-    val key = sha256Hex(url)
+    val key = Integer.toHexString(url.hashCode())
     val jpg = File(dir, "$key.jpg")
     val dur = File(dir, "$key.dur")
     if (jpg.exists()) {
