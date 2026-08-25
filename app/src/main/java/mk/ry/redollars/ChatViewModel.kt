@@ -125,8 +125,10 @@ class ChatViewModel @Inject constructor(
     /** Composer contents + cursor, hoisted so edit prefill, smiley insertion and
      *  mention completion can all manipulate it. */
     private val composerDraftKey = "composer_draft_text"
+    private val draftPrefs = appContext.getSharedPreferences("draft", android.content.Context.MODE_PRIVATE)
     var composerValue by mutableStateOf(
         savedState.get<String>(composerDraftKey)?.let { TextFieldValue(it, TextRange(it.length)) }
+            ?: draftPrefs.getString(composerDraftKey, null)?.let { TextFieldValue(it, TextRange(it.length)) }
             ?: TextFieldValue(""),
     )
         private set
@@ -136,6 +138,13 @@ class ChatViewModel @Inject constructor(
     private fun updateComposer(value: TextFieldValue) {
         composerValue = value
         savedState[composerDraftKey] = value.text
+        draftPrefs.edit().putString(composerDraftKey, value.text).apply()
+    }
+
+    /** Clear draft after successful send */
+    private fun clearDraft() {
+        updateComposer(TextFieldValue(""))
+        draftPrefs.edit().remove(composerDraftKey).apply()
     }
     /** Suggestions for the trailing `@query` at the cursor (mention autocomplete). */
     var mentionCandidates by mutableStateOf<List<UserSearchDto>>(emptyList())

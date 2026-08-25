@@ -182,7 +182,7 @@ fun MessageRow(
                             // circle looks blurry on hi-DPI screens; the large source
                             // stays crisp and Coil downscales it once.
                             model = avatarUrl(m.avatar, 'l'),
-                            contentDescription = null,
+                            contentDescription = "用户头像 ${m.nickname}", 
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(AVATAR)

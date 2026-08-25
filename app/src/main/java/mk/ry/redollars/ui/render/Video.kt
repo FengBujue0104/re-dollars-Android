@@ -84,8 +84,9 @@ fun VideoBlockView(url: String) {
         runCatching { Uri.parse(url).host }.getOrNull()?.removePrefix("www.") ?: "视频"
     }
 
-    val meta by produceState(metaCache.get(url), url) {
-        if (value == null) {
+    var retryKey by androidx.compose.runtime.remember(url) { androidx.compose.runtime.mutableStateOf(0) }
+    val meta by produceState(metaCache.get(url), url, retryKey) {
+        if (value == null || retryKey > 0) {
             val dir = File(ctx.cacheDir, "vthumb").apply { mkdirs() }
             value = withContext(Dispatchers.IO) { loadVideoMeta(dir, url) }
                 ?.also { metaCache.put(url, it) }
@@ -159,8 +160,11 @@ fun VideoBlockView(url: String) {
                 color = cs.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 12.dp),
+                modifier = Modifier.padding(start = 12.dp).weight(1f),
             )
+            androidx.compose.material3.TextButton(onClick = { retryKey++ }) {
+                androidx.compose.material3.Text("重试")
+            }
         }
     }
 
