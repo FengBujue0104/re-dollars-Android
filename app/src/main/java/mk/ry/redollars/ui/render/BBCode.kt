@@ -280,12 +280,12 @@ fun BBCodeMessage(message: String, modifier: Modifier = Modifier) {
         blocks.forEach { block ->
             when (block) {
                 is TextBlock -> InlineText(block.text)
-                is ImageBlock -> ImageStack(block.urls)
+                is ImageBlock -> ImageStack(block.urls.filter { isHttpUrl(it) })
                 is QuoteBlock -> QuoteView(block.inner)
                 is CodeBlock -> CodeView(block.content)
                 is LinkBlock -> LinkLine(block.label, block.url)
-                is AudioBlock -> AudioBlockView(block.url)
-                is VideoBlock -> VideoBlockView(block.url)
+                is AudioBlock -> if (isHttpUrl(block.url)) AudioBlockView(block.url) else InlineText("[音频: 无效链接]")
+                is VideoBlock -> if (isHttpUrl(block.url)) VideoBlockView(block.url) else InlineText("[视频: 无效链接]")
             }
         }
     }

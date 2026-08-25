@@ -154,6 +154,7 @@ fun ChatScreen(
                 onMention = { vm.mentionUser(it.uid, it.nickname) },
                 loadingOlder = vm.loadingOlder,
                 onLoadOlder = vm::loadOlder,
+                onSyncNewer = vm::syncNewer,
                 onReact = vm::toggleReaction,
                 onReply = vm::startReply,
                 onEdit = vm::startEdit,
@@ -351,6 +352,7 @@ private fun MessageList(
     onMention: (MessageDto) -> Unit,
     loadingOlder: Boolean,
     onLoadOlder: () -> Unit,
+    onSyncNewer: () -> Unit = {},
     onReact: (Long, String) -> Unit,
     onReply: (MessageDto) -> Unit,
     onEdit: (MessageDto) -> Unit,
@@ -419,6 +421,7 @@ private fun MessageList(
         val target = jumpToId ?: return@LaunchedEffect
         val index = messages.indexOfFirst { it.id == target }
         val oldestLoaded = messages.firstOrNull()?.id ?: Long.MAX_VALUE
+        val newestLoaded = messages.lastOrNull()?.id ?: Long.MIN_VALUE
         when {
             index >= 0 -> {
                 listState.animateScrollToItem(index + if (loadingOlder) 1 else 0)
@@ -426,8 +429,14 @@ private fun MessageList(
             }
             // Older than the loaded window: page back and re-run when messages change.
             messages.isNotEmpty() && target < oldestLoaded -> onLoadOlder()
+            // Newer than the loaded window: catch up then retry (cold-start push)
+            messages.isNotEmpty() && target > newestLoaded -> {
+                onSyncNewer()
+            }
             // Should be in range but missing (e.g. deleted): give up quietly.
             messages.isNotEmpty() -> onJumpHandled()
+            // Empty list: keep pending, sync will fill
+            else -> {}
         }
     }
 

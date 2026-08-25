@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import mk.ry.redollars.data.db.MessageDao
 import mk.ry.redollars.data.db.toDto
 import mk.ry.redollars.data.db.toEntity
@@ -98,6 +99,18 @@ class MessageRepository @Inject constructor(
     private val _blockedUsers = MutableStateFlow(effectiveBlocked())
     val blockedUsers: StateFlow<Set<Long>> = _blockedUsers.asStateFlow()
 
+    fun clearAccountState() {
+        _favorites.value = emptyList()
+        _localBlocked.value = emptySet()
+        _siteBlocked.value = emptySet()
+        _siteUnblocked.value = emptySet()
+        _blockedUsers.value = emptySet()
+        _notifications.value = emptyList()
+        _typingUsers.value = emptyList()
+        displayLimit.value = INITIAL_WINDOW
+        ownUid = 0
+    }
+
     private fun effectiveBlocked(): Set<Long> =
         _localBlocked.value + (_siteBlocked.value - _siteUnblocked.value)
 
@@ -142,7 +155,10 @@ class MessageRepository @Inject constructor(
      * resolve to uids through the backend, behind a persistent username→uid cache
      * so repeat launches skip the network (initializeBlockedUsers in user.ts).
      */
+    private var ignoreListSeq = 0L
+    private var lastIgnoreListSeq = 0L
     fun setSiteIgnoreList(raw: List<String>) {
+        val seq = ++ignoreListSeq
         scope.launch {
             val uids = mutableSetOf<Long>()
             val cache = loadNameCache().toMutableMap()
@@ -156,8 +172,11 @@ class MessageRepository @Inject constructor(
                 }
             }
             if (unresolved.isNotEmpty()) {
-                val resolved = runCatching { rest.lookupUsersByName(unresolved) }
-                    .getOrDefault(emptyMap())
+                val resolved = runCatching { rest.lookupUsersByName(unresolved) }.getOrNull()
+                if (resolved == null) {
+                    log("Ignore list resolve failed — keeping previous list")
+                    return@launch
+                }
                 if (resolved.isNotEmpty()) {
                     uids.addAll(resolved.values)
                     cache.putAll(resolved)
@@ -165,11 +184,26 @@ class MessageRepository @Inject constructor(
                         .putString(PREF_NAME_CACHE, AppJson.encodeToString(nameCacheSerializer, cache))
                         .apply()
                 }
+                if (resolved.size < unresolved.size) {
+                    log("Ignore list partial resolve ${resolved.size}/${unresolved.size} — keeping previous for unresolved")
+                    val merged = _siteBlocked.value.toMutableSet()
+                    merged.addAll(uids)
+                    if (merged != _siteBlocked.value) {
+                        if (seq < lastIgnoreListSeq) return@launch
+                        lastIgnoreListSeq = seq
+                        _siteBlocked.value = merged
+                        persistUidSet(PREF_SITE_BLOCKED, merged)
+                        onBlockedChanged()
+                        log("Ignore list: ${merged.size} user(s) blocked via Bangumi (partial)")
+                    }
+                    return@launch
+                }
             }
+            if (seq < lastIgnoreListSeq) return@launch
+            lastIgnoreListSeq = seq
             if (uids != _siteBlocked.value) {
                 _siteBlocked.value = uids
                 persistUidSet(PREF_SITE_BLOCKED, uids)
-                // Overrides only make sense for users still on the site list.
                 val overrides = _siteUnblocked.value intersect uids
                 if (overrides != _siteUnblocked.value) {
                     _siteUnblocked.value = overrides
@@ -251,7 +285,15 @@ class MessageRepository @Inject constructor(
             http.newCall(req).execute().use { res ->
                 val body = res.body
                 if (!res.isSuccessful || body == null) null
-                else FetchedImage(body.bytes(), res.header("Content-Type")?.substringBefore(';')?.trim())
+                else {
+                    val len = res.header("Content-Length")?.toLongOrNull()
+                    if (len != null && len > 10 * 1024 * 1024) null
+                    else {
+                        val bytes = body.bytes()
+                        if (bytes.size > 10 * 1024 * 1024) null
+                        else FetchedImage(bytes, res.header("Content-Type")?.substringBefore(';')?.trim())
+                    }
+                }
             }
         }.getOrNull()
     }
@@ -429,6 +471,7 @@ class MessageRepository @Inject constructor(
     }
 
     private val syncMutex = Mutex()
+    private val reactionMutex = Mutex()
 
     /**
      * Catch up on everything newer than the highest cached id. The backend caps each
@@ -500,7 +543,7 @@ class MessageRepository @Inject constructor(
     suspend fun loadOlder(beforeId: Long): Int {
         val cached = dao.countOlderThan(beforeId)
         if (cached >= PAGE_SIZE) {
-            displayLimit.value += PAGE_SIZE
+            displayLimit.value = (displayLimit.value + PAGE_SIZE).coerceAtMost(2000)
             return PAGE_SIZE
         }
         val fetched = runCatching { rest.fetchHistory(beforeId, PAGE_SIZE) }.getOrDefault(emptyList())
@@ -508,7 +551,7 @@ class MessageRepository @Inject constructor(
         log("History: +${fetched.size} fetched before id=$beforeId (cached older=$cached)")
         val available = cached + fetched.size
         if (available == 0) return -1
-        displayLimit.value += available
+        displayLimit.value = (displayLimit.value + available).coerceAtMost(2000)
         return available
     }
 
@@ -556,7 +599,14 @@ class MessageRepository @Inject constructor(
             }
             is WsEvent.OnlineCount -> _onlineCount.value = event.count
             is WsEvent.NewMessages -> {
-                scope.launch { dao.upsertAll(event.messages.map { it.toEntity() }) }
+                scope.launch { reactionMutex.withLock {
+                    val filtered = mutableListOf<mk.ry.redollars.data.db.MessageEntity>()
+                    for (m in event.messages) {
+                        val existing = dao.getById(m.id)
+                        if (existing?.isDeleted != true) filtered.add(m.toEntity())
+                    }
+                    if (filtered.isNotEmpty()) dao.upsertAll(filtered)
+                } }
                 // A delivered message implies its author stopped typing.
                 for (m in event.messages) clearTyping(m.uid)
             }
@@ -583,9 +633,13 @@ class MessageRepository @Inject constructor(
                 for ((id, active) in event.users) if (active) current.add(id) else current.remove(id)
                 _onlineUsers.value = current
             }
-            is WsEvent.MessageDeleted -> scope.launch { dao.markDeleted(event.messageId) }
+            is WsEvent.MessageDeleted -> scope.launch { reactionMutex.withLock { dao.markDeleted(event.messageId) } }
             is WsEvent.MessageEdited -> scope.launch {
-                dao.upsertAll(listOf(event.message.toEntity()))
+                reactionMutex.withLock {
+                    val existing = dao.getById(event.message.id)
+                    if (existing?.isDeleted == true) return@withLock
+                    dao.upsertAll(listOf(event.message.toEntity()))
+                }
             }
             is WsEvent.Log -> log(event.line)
         }
@@ -594,8 +648,8 @@ class MessageRepository @Inject constructor(
     private suspend fun patchReactions(
         messageId: Long,
         transform: (List<ReactionDto>) -> List<ReactionDto>,
-    ) {
-        val row = dao.getById(messageId) ?: return // not cached; next fetch carries them
+    ) = reactionMutex.withLock {
+        val row = dao.getById(messageId) ?: return@withLock
         val dto = row.toDto()
         dao.upsertAll(listOf(dto.copy(reactions = transform(dto.reactions)).toEntity()))
     }

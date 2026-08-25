@@ -36,6 +36,10 @@ class UploadApi(base: OkHttpClient) {
         if (token != null) {
             val first = upload(Config.UPLOAD_API_URL, "image", filePart, fileName, token)
             if (first.url != null) return first
+            // Only retry anonymously on auth failures, not on network/timeout where first may have succeeded
+            val msg = first.error.orEmpty().lowercase()
+            val isAuthError = "401" in msg || "403" in msg || "unauthorized" in msg || "forbidden" in msg || "auth" in msg
+            if (!isAuthError) return first
             return upload(Config.UPLOAD_API_URL, "image", filePart, fileName, null)
         }
         return upload(Config.UPLOAD_API_URL, "image", filePart, fileName, null)

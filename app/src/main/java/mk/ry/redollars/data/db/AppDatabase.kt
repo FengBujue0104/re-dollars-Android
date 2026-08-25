@@ -19,7 +19,11 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "redollars.db",
-                ).fallbackToDestructiveMigration(true).build().also { INSTANCE = it }
+                ).addMigrations(
+                    object : androidx.room.migration.Migration(1, 2) { override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {} },
+                    object : androidx.room.migration.Migration(2, 3) { override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {} },
+                    object : androidx.room.migration.Migration(1, 3) { override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {} }
+                ).fallbackToDestructiveMigrationOnDowngrade(true).build().also { INSTANCE = it }
             }
     }
 }

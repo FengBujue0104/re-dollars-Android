@@ -45,6 +45,7 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okio.BufferedSink
 import okio.source
+import java.util.ArrayDeque
 import java.io.File
 import java.io.IOException
 import javax.inject.Inject
@@ -149,7 +150,19 @@ class ChatViewModel @Inject constructor(
     data class EditingState(val id: Long, val hiddenQuote: String?)
 
     private var started = false
-    private var pendingText = ""
+    private var pendingSendSeq = 0L
+    private data class PendingSend(val id: Long, val text: String)
+    private val pendingSends: ArrayDeque<PendingSend> = ArrayDeque()
+    private var pendingText: String
+        get() = pendingSends.lastOrNull()?.text ?: ""
+        set(value) {
+            if (value.isEmpty()) pendingSends.clear()
+            else if (pendingSends.isEmpty()) pendingSends.addLast(PendingSend(++pendingSendSeq, value))
+            else {
+                val last = pendingSends.removeLast()
+                pendingSends.addLast(last.copy(text = value))
+            }
+        }
 
     init {
         viewModelScope.launch { repo.logs.collect { log(it) } }
@@ -200,7 +213,8 @@ class ChatViewModel @Inject constructor(
         session = info
         // Remember we have a session so future launches auto-login silently on open.
         sessionHintPrefs.edit().putBoolean("had_session", true).apply()
-        viewModelScope.launch {
+        loginJob?.cancel()
+        loginJob = viewModelScope.launch {
             // The page-extracted name is the login slug (or a uid fallback), NOT the
             // display nickname — resolve the real one from the backend profile cache
             // before joining, or other clients would show the wrong name for our
@@ -303,6 +317,9 @@ class ChatViewModel @Inject constructor(
      *  reset the shared WebView to a logged-out page, and fall back to the anonymous
      *  read connection. Posting/edit/delete lock again until the user logs back in. */
     fun logout() {
+        loginJob?.cancel(); loginJob = null
+        authValidationJob?.cancel(); authValidationJob = null
+        repo.clearAccountState()
         repo.setAuthToken(null)
         sessionHintPrefs.edit().putBoolean("had_session", false).apply()
         session = null
@@ -311,12 +328,19 @@ class ChatViewModel @Inject constructor(
         oauthRequestUrl = null
         showAccount = false
         showLogin = false
+        pendingSends.clear()
+        replyTo = null
+        editing = null
+        setComposer("")
+        discardVoiceDraft()
+        stopTyping()
         val cm = android.webkit.CookieManager.getInstance()
-        cm.removeAllCookies(null)
-        cm.flush()
-        // Reset the shared WebView off the logged-in page so a later login starts clean.
+        cm.removeAllCookies { _ ->
+            cm.flush()
+            webViewReloadUrl = "${mk.ry.redollars.net.Config.BGM_HOST}/login"
+        }
         webViewReloadUrl = "${mk.ry.redollars.net.Config.BGM_HOST}/login"
-        repo.connect(uid = 0) // back to anonymous read
+        repo.connect(uid = 0)
         log("Logged out")
     }
 
@@ -331,6 +355,8 @@ class ChatViewModel @Inject constructor(
     }
 
     // ---- Composer typing signals: start immediately, stop after 2.5s idle or on send. ----
+    private var loginJob: Job? = null
+    private var authValidationJob: Job? = null
     private var typingStopJob: Job? = null
     private var typingActive = false
 
@@ -777,6 +803,8 @@ class ChatViewModel @Inject constructor(
     /** Media wall page (gallery sheet). */
     suspend fun fetchGallery(offset: Int) = repo.fetchGallery(offset)
 
+    fun syncNewer() { viewModelScope.launch { repo.syncNewer() } }
+
     /** Page one more window of history above the oldest displayed message. */
     fun loadOlder() {
         if (loadingOlder || historyExhausted) return
@@ -851,7 +879,6 @@ class ChatViewModel @Inject constructor(
     fun beginSend(text: String): String {
         stopTyping()
         val content = transformMentions(text)
-        // Voice rides along on its own line (sendMessage.ts attachVoice).
         val voice = voiceDraft?.url?.let { "[audio]$it[/audio]" }
         val merged = when {
             voice == null -> content
@@ -862,9 +889,14 @@ class ChatViewModel @Inject constructor(
         replyTo = null
         discardVoiceDraft()
         setComposer("")
-        pendingText = body
+        pendingSends.addLast(PendingSend(++pendingSendSeq, body))
         setDebugStatus("Posting via WebView…")
         return body
+    }
+    fun beginSendWithId(text: String): Pair<String, Long> {
+        val body = beginSend(text)
+        val id = pendingSends.lastOrNull()?.id ?: pendingSendSeq
+        return body to id
     }
 
     fun noteSend(message: String) {
@@ -874,17 +906,20 @@ class ChatViewModel @Inject constructor(
     fun onWebPostResult(json: String) {
         viewModelScope.launch(Dispatchers.Main.immediate) {
             val obj = runCatching { AppJson.parseToJsonElement(json).jsonObject }.getOrNull()
-            val ok = obj?.get("ok")?.jsonPrimitive?.booleanOrNull ?: false
+            var ok = obj?.get("ok")?.jsonPrimitive?.booleanOrNull ?: false
             val status = obj?.get("status")?.jsonPrimitive?.intOrNull ?: -1
             val head = obj?.get("head")?.jsonPrimitive?.contentOrNull.orEmpty().replace("\n", " ")
             val url = obj?.get("url")?.jsonPrimitive?.contentOrNull.orEmpty()
-            log("WebView POST -> ok=$ok status=$status url=${url.take(80)} head=${head.take(80)}")
-
-            // Bangumi cookie expired mid-session: the fetch lands on /login (or 401/403).
-            // Restore the unsent draft and re-open the login overlay for a clean retry.
+            val pendingId = obj?.get("pendingId")?.jsonPrimitive?.let { runCatching { it.content.toLong() }.getOrNull() } ?: obj?.get("id")?.jsonPrimitive?.let { runCatching { it.content.toLong() }.getOrNull() }
+            log("WebView POST -> ok=$ok status=$status url=${url.take(80)} head=${head.take(80)} pendingId=$pendingId")
+            val pending = when {
+                pendingId != null -> pendingSends.find { it.id == pendingId } ?: pendingSends.firstOrNull()
+                else -> pendingSends.firstOrNull()
+            }
+            val pendingBody = pending?.text ?: pendingText
             if (status == 401 || status == 403 || url.contains("/login", ignoreCase = true)) {
-                if (pendingText.isNotBlank()) setComposer(pendingText)
-                pendingText = ""
+                if (pendingBody.isNotBlank()) setComposer(pendingBody)
+                if (pending != null) pendingSends.remove(pending) else pendingSends.clear()
                 session = null
                 authReady = false
                 sendStatus = "登录已过期，请重新登录后再发"
@@ -892,13 +927,21 @@ class ChatViewModel @Inject constructor(
                 webViewReloadUrl = "${mk.ry.redollars.net.Config.BGM_HOST}/login"
                 return@launch
             }
-
+            val lowerHead = head.lowercase()
+            val looksLikeHtml = head.trimStart().startsWith("<", ignoreCase = true) || "<html" in lowerHead || "<!doctype" in lowerHead
+            if (ok && looksLikeHtml) {
+                log("WebView POST looks like HTML despite ok=true — treating as failure")
+                ok = false
+            }
             if (!ok) {
-                sendStatus = "Post failed (status=$status)"
+                if (pendingBody.isNotBlank()) setComposer(pendingBody)
+                if (pending != null) pendingSends.remove(pending)
+                sendStatus = if (looksLikeHtml) "Post failed (server returned HTML)" else "Post failed (status=$status)"
                 return@launch
             }
             setDebugStatus("Posted; confirming…")
-            val confirmed = confirmLoop(session?.uid ?: 0, pendingText)
+            val confirmed = confirmLoop(session?.uid ?: 0, pendingBody)
+            if (pending != null) pendingSends.remove(pending)
             setDebugStatus(
                 if (confirmed != null) "Confirmed (id=${confirmed.id})" else "Posted; awaiting WS echo",
             )

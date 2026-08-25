@@ -60,6 +60,7 @@ class DollarsWs(
     private var active = true
     private var intentionallyClosed = false
     private var attempt = 0
+    private var lastPongAt = 0L
 
     /** [name]/[avatar] enable presence sharing (`join`): the server then attributes our
      *  typing/presence frames. Without them we stay an identified-but-anonymous reader. */
@@ -95,15 +96,18 @@ class DollarsWs(
         uids.joinToString(",", "[", "]") { "\"$it\"" }
 
     /** Foreground/background toggle: pause heartbeat when hidden, resume/reconnect when shown. */
+    /** Foreground/background toggle: quiesce socket when backgrounded. */
     fun setActive(active: Boolean) {
         if (this.active == active) return
         this.active = active
-        currentSocket?.send("""{"type":"presence","open":$active}""")
+        currentSocket?.send("{\"type\":\"presence\",\"open\":$active}")
         if (active) {
             if (currentSocket == null && !intentionallyClosed) open() else startHeartbeat()
         } else {
             stopHeartbeat()
             reconnectJob?.cancel(); reconnectJob = null
+            currentSocket?.close(1000, "background")
+            currentSocket = null
         }
     }
 
@@ -121,6 +125,7 @@ class DollarsWs(
             .header("User-Agent", Config.USER_AGENT)
             .build()
         // Replacing currentSocket makes any prior socket's callbacks stale (ignored below).
+        currentSocket?.close(1000, "reconnect")
         currentSocket = client.newWebSocket(req, listener)
     }
 
@@ -161,6 +166,7 @@ class DollarsWs(
         override fun onOpen(webSocket: WebSocket, response: Response) {
             if (webSocket !== currentSocket) return
             attempt = 0
+            lastPongAt = System.currentTimeMillis()
             onEvent(WsEvent.Status(true))
             onEvent(WsEvent.Log("WS open -> identify uid=$uid join=${joinName != null}"))
             webSocket.send("""{"type":"identify","uid":"$uid"}""")
@@ -263,7 +269,7 @@ class DollarsWs(
                         ?.let { onEvent(WsEvent.Presence(listOf(it))) }
                 }
 
-                "pong" -> { /* heartbeat ack */ }
+                "pong" -> { lastPongAt = System.currentTimeMillis() }
                 else -> { /* unhandled frame types */ }
             }
         }

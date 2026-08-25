@@ -174,14 +174,17 @@ private fun RedollarsApp(
 
             // The VM requests the rymk-auth flow after login when no valid backend token
             // is stored; drive it in the (now visible) login WebView.
-            LaunchedEffect(vm.oauthRequestUrl) {
-                vm.oauthRequestUrl?.let { webView?.loadUrl(it) }
+            // Also re-run when webView becomes available so rotation/recreation doesn't drop it.
+            LaunchedEffect(vm.oauthRequestUrl, webView) {
+                val url = vm.oauthRequestUrl ?: return@LaunchedEffect
+                val wv = webView ?: return@LaunchedEffect
+                wv.loadUrl(url)
             }
-
-            // After rymk-auth, the VM asks to return the WebView to the Bangumi origin so
-            // same-origin posting works again.
-            LaunchedEffect(vm.webViewReloadUrl) {
-                vm.webViewReloadUrl?.let { webView?.loadUrl(it); vm.onWebViewReloaded() }
+            LaunchedEffect(vm.webViewReloadUrl, webView) {
+                val url = vm.webViewReloadUrl ?: return@LaunchedEffect
+                val wv = webView ?: return@LaunchedEffect
+                wv.loadUrl(url)
+                vm.onWebViewReloaded()
             }
 
             CompositionLocalProvider(
@@ -204,8 +207,8 @@ private fun RedollarsApp(
                                         vm.noteSend("One sec — getting ready, try again")
                                     }
                                     else -> {
-                                        val body = vm.beginSend(text)
-                                        wv.evaluateJavascript(buildPostJs(body), null)
+                                        val (body, pid) = vm.beginSendWithId(text)
+                                        wv.evaluateJavascript(buildPostJs(body, pid), null)
                                     }
                                 }
                             },
@@ -272,8 +275,9 @@ private fun RedollarsApp(
  * chii_auth / chii_sec_id cookies), with X-Requested-With; the browser adds cookies,
  * Origin, Referer and sec-fetch-* automatically.
  */
-private fun buildPostJs(text: String): String {
+private fun buildPostJs(text: String, pendingId: Long? = null): String {
     val msg = org.json.JSONObject.quote(text)
+    val pidField = if (pendingId != null) ", pendingId: $pendingId" else ""
     return """
         (function(){
           try {
@@ -287,10 +291,10 @@ private fun buildPostJs(text: String): String {
               body: 'message=' + encodeURIComponent($msg)
             })
             .then(function(r){ return r.text().then(function(t){
-              AndroidPost.deliver(JSON.stringify({ ok: r.ok, status: r.status, url: r.url, len: t.length, head: t.slice(0, 160) }));
+              AndroidPost.deliver(JSON.stringify({ ok: r.ok, status: r.status, url: r.url, len: t.length, head: t.slice(0, 160)$pidField }));
             }); })
-            .catch(function(e){ AndroidPost.deliver(JSON.stringify({ ok: false, status: -1, err: String(e) })); });
-          } catch (e) { AndroidPost.deliver(JSON.stringify({ ok: false, status: -2, err: String(e) })); }
+            .catch(function(e){ AndroidPost.deliver(JSON.stringify({ ok: false, status: -1, err: String(e)$pidField })); });
+          } catch (e) { AndroidPost.deliver(JSON.stringify({ ok: false, status: -2, err: String(e)$pidField })); }
         })();
     """.trimIndent()
 }
