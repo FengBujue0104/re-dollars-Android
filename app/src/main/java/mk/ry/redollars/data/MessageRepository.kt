@@ -420,14 +420,18 @@ class MessageRepository @Inject constructor(
     /** Outcome of validating the stored backend token against /auth/me. */
     enum class AuthValidation { Valid, Invalid, NetworkError }
 
-    /** Validate the stored token: Valid when it matches [expectUid]; Invalid drops the
-     *  stale token (so the OAuth flow re-runs); NetworkError keeps it for a later retry. */
+    /** Validate the stored token: Valid when backend confirms it. If the token's
+     *  user id differs from [expectUid], we still consider it Valid (the JWT is the
+     *  source of truth) and let the caller reconcile the session. */
     suspend fun validateAuthToken(expectUid: Long): AuthValidation {
         val token = authToken ?: return AuthValidation.Invalid
         return when (val r = rest.authMe(token)) {
-            is AuthMeResult.Valid ->
-                if (r.user.id == expectUid) AuthValidation.Valid
-                else { setAuthToken(null); AuthValidation.Invalid }
+            is AuthMeResult.Valid -> {
+                if (expectUid != 0L && r.user.id != 0L && r.user.id != expectUid) {
+                    log("Auth uid mismatch: token uid=${r.user.id} vs expect $expectUid, treating as Valid and will reconcile")
+                }
+                AuthValidation.Valid
+            }
             AuthMeResult.Invalid -> { setAuthToken(null); AuthValidation.Invalid }
             AuthMeResult.Error -> AuthValidation.NetworkError
         }

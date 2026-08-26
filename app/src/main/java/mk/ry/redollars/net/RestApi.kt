@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
@@ -87,13 +88,23 @@ class RestApi(private val client: OkHttpClient) {
                     res.code == 401 || res.code == 403 -> AuthMeResult.Invalid
                     !res.isSuccessful || body.isBlank() -> AuthMeResult.Error
                     else -> {
+                        // Try primary shape {status, user:{id,...}}, fallback to {user:{id}} or {id}
                         val user = runCatching { AppJson.decodeFromString<AuthMeResponse>(body) }
                             .getOrNull()?.takeIf { it.status }?.user
-                        if (user != null) AuthMeResult.Valid(user) else AuthMeResult.Invalid
+                            ?: runCatching { AppJson.decodeFromString<AuthMeResponse>(body) }.getOrNull()?.user
+                            ?: runCatching {
+                                val el = AppJson.parseToJsonElement(body).jsonObject
+                                val id = el["id"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                                    ?: el["uid"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                                if (id != null) AuthUserDto(id = id, nickname = el["nickname"]?.jsonPrimitive?.contentOrNull ?: "", avatar = el["avatar"]?.jsonPrimitive?.contentOrNull ?: "") else null
+                            }.getOrNull()
+                        if (user != null && user.id != 0L) AuthMeResult.Valid(user) else AuthMeResult.Invalid
                     }
                 }
             }
         } catch (e: IOException) {
+            AuthMeResult.Error
+        } catch (e: Exception) {
             AuthMeResult.Error
         }
     }

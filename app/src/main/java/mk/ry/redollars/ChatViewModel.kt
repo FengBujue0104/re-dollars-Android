@@ -351,6 +351,7 @@ class ChatViewModel @Inject constructor(
                 return@launch
             }
             repo.setAuthToken(token)
+            log("Validating token for uid $uidForValidation")
             when (val result = repo.validateAuthTokenWithRetry(uidForValidation)) {
                 MessageRepository.AuthValidation.Valid -> {
                     authReady = true
