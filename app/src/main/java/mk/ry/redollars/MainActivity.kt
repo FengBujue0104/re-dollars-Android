@@ -236,10 +236,7 @@ private fun RedollarsApp(
 
                     if (vm.showLogin) {
                         FilledTonalIconButton(
-                            onClick = {
-                                vm.retryAuth()
-                                webView?.reload()
-                            },
+                            onClick = vm::retryAuth,
                             modifier = Modifier
                                 .align(Alignment.TopStart)
                                 .statusBarsPadding()

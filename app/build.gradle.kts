@@ -60,6 +60,10 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 kotlin {
@@ -120,4 +124,6 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging")
     implementation("androidx.lifecycle:lifecycle-process:2.11.0")
     implementation("androidx.security:security-crypto:1.0.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

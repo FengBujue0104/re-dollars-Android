@@ -61,13 +61,32 @@ object AppModule {
     fun providePreferences(@ApplicationContext context: Context): SharedPreferences {
         return try {
             val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-            EncryptedSharedPreferences.create(
+            val encrypted = EncryptedSharedPreferences.create(
                 "redollars_enc",
                 masterKeyAlias,
                 context,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
             )
+
+            // v0.3.4 introduced encrypted preferences but did not copy existing
+            // auth tokens out of the legacy plain store. Leave the old store untouched
+            // if an encrypted write fails.
+            val legacy = context.getSharedPreferences("redollars", Context.MODE_PRIVATE)
+            val legacyAuthToken = legacy.getString("dollars_auth_token", null)?.takeIf { it.isNotBlank() }
+            if (!encrypted.contains("dollars_auth_token") && legacyAuthToken != null) {
+                val copied = encrypted.edit().putString("dollars_auth_token", legacyAuthToken).commit()
+                if (copied) legacy.edit().remove("dollars_auth_token").apply()
+            }
+            if (!encrypted.contains("dollars_upload_auth_token")) {
+                val uploadToken = legacy.getString("dollars_upload_auth_token", null)?.takeIf { it.isNotBlank() }
+                    ?: legacyAuthToken?.takeIf { it.count { ch -> ch == '.' } == 2 }
+                uploadToken?.let {
+                    val copied = encrypted.edit().putString("dollars_upload_auth_token", it).commit()
+                    if (copied) legacy.edit().remove("dollars_upload_auth_token").apply()
+                }
+            }
+            encrypted
         } catch (_: Exception) {
             // Fallback to plain on devices where Keystore is broken
             context.getSharedPreferences("redollars", Context.MODE_PRIVATE)
