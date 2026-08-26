@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
@@ -33,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -52,7 +50,8 @@ import kotlinx.coroutines.launch
 /**
  * Full-screen image viewer: pinch to zoom (1x–5x, temp shrink to 0.55x with spring-back),
  * drag to pan when zoomed, double-tap to toggle zoom, single-tap to toggle chrome / dismiss.
- * Chrome (download/collect/close) auto-hides after 2.2s to avoid covering large image top.
+ * Chrome (download/collect/close) auto-hides after 2.2s; the image itself stays at
+ * normal brightness (no dimming scrim behind the action buttons).
  */
 @Composable
 fun Lightbox(
@@ -165,19 +164,6 @@ fun Lightbox(
                         translationY = offset.y,
                     ),
             )
-            // Top scrim + close button (auto-hide)
-            AnimatedVisibility(
-                visible = chromeVisible,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.45f), Color.Transparent))),
-                )
-            }
             AnimatedVisibility(
                 visible = chromeVisible,
                 enter = fadeIn(),
@@ -201,7 +187,6 @@ fun Lightbox(
                 ) {
                     Row(
                         Modifier
-                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(50))
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
