@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -108,13 +109,15 @@ fun MessageRow(
         runCatching { Color(android.graphics.Color.parseColor(m.color)) }.getOrNull()
     }
 
-    // Swipe-to-reply (useSwipeToReply.ts): drag the row right with elastic resistance;
-    // past the threshold, releasing starts a reply. The indicator scales/fades in behind.
+    // Swipe-to-reply (useSwipeToReply.ts): drag the bubble away from its screen edge with
+    // elastic resistance; past the threshold, releasing starts a reply. Others' bubbles sit
+    // on the left and drag right; own bubbles sit on the right and drag left.
     val swipeOffset = remember(m.id) { Animatable(0f) }
     val swipeScope = rememberCoroutineScope()
     val swipeTriggerPx = with(LocalDensity.current) { 40.dp.toPx() }
+    val swipeDir = if (isOwn) -1f else 1f
     val swipeModifier = if (!m.isDeleted) {
-        Modifier.pointerInput(m.id) {
+        Modifier.pointerInput(m.id, isOwn) {
             val maxPull = 60.dp.toPx()
             val ease = 150.dp.toPx()
             var raw = 0f
@@ -129,8 +132,9 @@ fun MessageRow(
                     if (hit) onReply()
                 },
             ) { change, delta ->
-                raw = (raw + delta).coerceAtLeast(0f)
-                val eased = maxPull * (1f - exp(-raw / ease))
+                raw += delta
+                val pulled = (raw * swipeDir).coerceAtLeast(0f)
+                val eased = maxPull * (1f - exp(-pulled / ease))
                 if (eased != swipeOffset.value) {
                     change.consume()
                     swipeScope.launch { swipeOffset.snapTo(eased) }
@@ -148,8 +152,8 @@ fun MessageRow(
                 shape = CircleShape,
                 color = cs.primaryContainer,
                 modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 10.dp)
+                    .align(if (isOwn) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(horizontal = 10.dp)
                     .size(28.dp)
                     .graphicsLayer {
                         alpha = swipeProgress
@@ -158,7 +162,8 @@ fun MessageRow(
                     },
             ) {
                 Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
+                    if (isOwn) Icons.AutoMirrored.Filled.ArrowForward
+                    else Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Reply",
                     tint = cs.onPrimaryContainer,
                     modifier = Modifier.padding(5.dp),
@@ -170,7 +175,7 @@ fun MessageRow(
             Modifier
                 .fillMaxWidth()
                 .padding(start = 8.dp, end = 8.dp, top = if (firstInGroup) 8.dp else 2.dp)
-                .offset { IntOffset(swipeOffset.value.roundToInt(), 0) }
+                .offset { IntOffset((swipeOffset.value * swipeDir).roundToInt(), 0) }
                 .then(swipeModifier),
             horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start,
         ) {
