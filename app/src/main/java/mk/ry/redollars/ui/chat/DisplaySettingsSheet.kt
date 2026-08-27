@@ -66,7 +66,7 @@ fun DisplaySettingsSheet(
                 onChecked = { v -> onChange { it.copy(autoLoadMediaPreviews = v) } },
             )
             SwitchRow(
-                title = "显示表情快评",
+                title = "显示贴贴",
                 caption = "长按菜单顶部的快捷表情行；菜单里的回复、复制不受影响",
                 checked = prefs.showQuickReactions,
                 onChecked = { v -> onChange { it.copy(showQuickReactions = v) } },
