@@ -32,6 +32,8 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import mk.ry.redollars.data.FetchedImage
+import mk.ry.redollars.data.DisplayPrefs
+import mk.ry.redollars.data.DisplaySettings
 import mk.ry.redollars.data.MessageRepository
 import mk.ry.redollars.net.AppJson
 import mk.ry.redollars.net.MessageDto
@@ -65,10 +67,10 @@ data class VoiceDraft(
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val repo: MessageRepository,
+    private val displaySettings: DisplaySettings,
     @param:ApplicationContext private val appContext: Context,
     private val savedState: SavedStateHandle,
 ) : ViewModel() {
-
     private val sessionHintPrefs =
         appContext.getSharedPreferences("session_hint", Context.MODE_PRIVATE)
     /** True if login completed on a previous launch; drives silent auto-login on open. */
@@ -94,6 +96,10 @@ class ChatViewModel @Inject constructor(
     val siteUnblockedUsers: StateFlow<Set<Long>> = repo.siteUnblockedUsers
     /** uids currently online among recently-visible authors (presence dots). */
     val onlineUsers: StateFlow<Set<Long>> = repo.onlineUsers
+    /** Chat display options (界面设置 sheet); persisted across launches. */
+    val displayPrefs: StateFlow<DisplayPrefs> = displaySettings.prefs
+    fun updateDisplayPrefs(transform: (DisplayPrefs) -> DisplayPrefs) =
+        displaySettings.update(transform)
 
     // ---- UI-only state ----
     var session by mutableStateOf<SessionInfo?>(null); private set

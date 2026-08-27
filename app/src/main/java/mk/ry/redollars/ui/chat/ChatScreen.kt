@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import mk.ry.redollars.ChatViewModel
+import mk.ry.redollars.data.DisplayPrefs
 import mk.ry.redollars.net.MessageDto
 import mk.ry.redollars.net.WsUser
 import java.time.Instant
@@ -89,6 +90,8 @@ fun ChatScreen(
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var showGallery by rememberSaveable { mutableStateOf(false) }
     var showBlockManager by rememberSaveable { mutableStateOf(false) }
+    var showDisplaySettings by rememberSaveable { mutableStateOf(false) }
+    val displayPrefs by vm.displayPrefs.collectAsState()
 
     Scaffold(
         topBar = {
@@ -101,6 +104,7 @@ fun ChatScreen(
                 onSearch = { showSearch = true },
                 onGallery = { showGallery = true },
                 onBlockManager = { showBlockManager = true },
+                onDisplaySettings = { showDisplaySettings = true },
                 onNotifications = { showNotifications = true },
                 backendAuthExpired = vm.backendAuthExpired,
                 onReconnect = vm::reconnect,
@@ -150,6 +154,7 @@ fun ChatScreen(
                 ownUid = vm.session?.uid,
                 canModify = vm.authReady,
                 onlineUsers = onlineUsers,
+                displayPrefs = displayPrefs,
                 onShowProfile = { vm.profileUid = it },
                 onMention = { vm.mentionUser(it.uid, it.nickname) },
                 loadingOlder = vm.loadingOlder,
@@ -194,6 +199,14 @@ fun ChatScreen(
             onSetSiteUnblocked = vm::setSiteUnblocked,
             loadProfile = vm::loadProfile,
             onDismiss = { showBlockManager = false },
+        )
+    }
+
+    if (showDisplaySettings) {
+        DisplaySettingsSheet(
+            prefs = displayPrefs,
+            onChange = vm::updateDisplayPrefs,
+            onDismiss = { showDisplaySettings = false },
         )
     }
 
@@ -248,6 +261,7 @@ private fun ChatTopBar(
     onSearch: () -> Unit,
     onGallery: () -> Unit,
     onBlockManager: () -> Unit,
+    onDisplaySettings: () -> Unit,
     onNotifications: () -> Unit,
     backendAuthExpired: Boolean,
     onReconnect: () -> Unit,
@@ -310,6 +324,13 @@ private fun ChatTopBar(
                         },
                     )
                     DropdownMenuItem(
+                        text = { Text("界面设置") },
+                        onClick = {
+                            showMenu = false
+                            onDisplaySettings()
+                        },
+                    )
+                    DropdownMenuItem(
                         text = { Text(if (debugOn) "隐藏调试信息" else "调试信息") },
                         onClick = {
                             showMenu = false
@@ -349,6 +370,7 @@ private fun MessageList(
     ownUid: Long?,
     canModify: Boolean,
     onlineUsers: Set<Long>,
+    displayPrefs: DisplayPrefs,
     onShowProfile: (Long) -> Unit,
     onMention: (MessageDto) -> Unit,
     loadingOlder: Boolean,
@@ -495,6 +517,7 @@ private fun MessageList(
                     ownUid = ownUid,
                     canModify = canModify,
                     online = m.uid in onlineUsers,
+                    prefs = displayPrefs,
                     onShowProfile = onShowProfile,
                     onMention = { onMention(m) },
                     onReact = { emoji -> onReact(m.id, emoji) },

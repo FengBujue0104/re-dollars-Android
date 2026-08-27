@@ -85,8 +85,11 @@ fun VideoBlockView(url: String) {
     }
 
     var retryKey by androidx.compose.runtime.remember(url) { androidx.compose.runtime.mutableStateOf(0) }
-    val meta by produceState(metaCache.get(url), url, retryKey) {
-        if (value == null || retryKey > 0) {
+    // Poster frames count as media previews: with auto-load off we stop fetching new
+    // ones (the host-label card shows instead), though already-cached frames still draw.
+    val autoLoad = LocalAutoLoadMedia.current
+    val meta by produceState(metaCache.get(url), url, retryKey, autoLoad) {
+        if ((value == null || retryKey > 0) && autoLoad) {
             val dir = File(ctx.cacheDir, "vthumb").apply { mkdirs() }
             value = withContext(Dispatchers.IO) { loadVideoMeta(dir, url) }
                 ?.also { metaCache.put(url, it) }
