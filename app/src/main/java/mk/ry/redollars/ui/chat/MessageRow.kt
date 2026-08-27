@@ -36,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import mk.ry.redollars.net.MessageDto
 import mk.ry.redollars.ui.render.BBCodeMessage
+import mk.ry.redollars.ui.render.LocalBubbleLongPress
 import mk.ry.redollars.ui.render.ReplyHeader
 import mk.ry.redollars.ui.render.Smilies
 import mk.ry.redollars.ui.render.avatarUrl
@@ -286,7 +288,13 @@ fun MessageRow(
                                             ),
                                     )
                                 }
-                                BBCodeMessage(m.message)
+                                // Media swallows gestures, so long-press on an image/sticker
+                                // never reaches the bubble; forward it to the same menu.
+                                CompositionLocalProvider(
+                                    LocalBubbleLongPress provides { showQuickReact = true },
+                                ) {
+                                    BBCodeMessage(m.message)
+                                }
                             }
                         }
                     }
