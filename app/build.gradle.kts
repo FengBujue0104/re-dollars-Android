@@ -24,8 +24,8 @@ android {
         applicationId = "mk.ry.redollars.mod"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.3.13"
+        versionCode = 18
+        versionName = "0.3.14"
     }
 
     signingConfigs {

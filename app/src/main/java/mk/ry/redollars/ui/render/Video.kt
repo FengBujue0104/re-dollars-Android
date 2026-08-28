@@ -63,7 +63,11 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mk.ry.redollars.net.Config
+import androidx.compose.ui.graphics.asAndroidBitmap
 import java.io.File
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Inline `[video]url[/video]` player. The chat list shows a poster: the clip's first
@@ -242,7 +246,26 @@ fun VideoThumbnail(
 
 private class VideoMeta(val frame: ImageBitmap, val durationMs: Long)
 
-private val metaCache = LruCache<String, VideoMeta>(48)
+// Byte-budgeted (~24MB): first frames decode at source resolution, so one 1080p
+// frame is ~8MB — an entry-counted cache could pin hundreds of MB on the media wall.
+private val metaCache = object : LruCache<String, VideoMeta>(24 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: VideoMeta): Int =
+        value.frame.asAndroidBitmap().allocationByteCount.coerceAtLeast(1)
+}
+
+private val retrieverPool = Executors.newFixedThreadPool(3) { r ->
+    Thread(r, "video-meta").apply { isDaemon = true }
+}
+
+/** Bounded wait for [block] on the retriever pool. The retriever's network path
+ *  stalls indefinitely on some hosts and cannot be interrupted (withTimeoutOrNull
+ *  cannot cancel a blocked native call); on timeout we stop waiting and the daemon
+ *  thread releases the retriever whenever the call eventually returns. */
+private fun <T> withRetrieverTimeout(timeoutMs: Long, block: () -> T): T? = try {
+    retrieverPool.submit(Callable(block)).get(timeoutMs, TimeUnit.MILLISECONDS)
+} catch (_: Exception) {
+    null // timeout / rejection / interruption — treat as "no metadata available"
+}
 
 private fun formatDuration(ms: Long): String {
     val totalSec = (ms / 1000).coerceAtLeast(0)
@@ -263,33 +286,22 @@ private fun loadVideoMeta(dir: File, url: String): VideoMeta? = runCatching {
             return@runCatching VideoMeta(cached.asImageBitmap(), durationMs)
         }
     }
-    val retriever = MediaMetadataRetriever()
-    try {
-        // Timeout after 5s to avoid ANR on slow hosts
-        val success = runCatching {
-            kotlinx.coroutines.runBlocking {
-                kotlinx.coroutines.withTimeoutOrNull(5000) {
-                    retriever.setDataSource(url, mapOf("User-Agent" to Config.BROWSER_UA))
-                    true
-                }
+    withRetrieverTimeout(12_000) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(url, mapOf("User-Agent" to Config.BROWSER_UA))
+            val durationMs = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+            val frame = retriever.frameAtTime ?: return@withRetrieverTimeout null
+            runCatching {
+                jpg.outputStream().use { frame.compress(Bitmap.CompressFormat.JPEG, 82, it) }
+                dur.writeText(durationMs.toString())
             }
-        }.getOrNull() ?: false
-        if (!success) return@runCatching null
-        val durationMs = retriever
-            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            ?.toLongOrNull() ?: 0L
-        val frame = runCatching {
-            kotlinx.coroutines.runBlocking {
-                kotlinx.coroutines.withTimeoutOrNull(3000) { retriever.frameAtTime }
-            }
-        }.getOrNull() ?: return@runCatching null
-        runCatching {
-            jpg.outputStream().use { frame.compress(Bitmap.CompressFormat.JPEG, 82, it) }
-            dur.writeText(durationMs.toString())
+            VideoMeta(frame.asImageBitmap(), durationMs)
+        } finally {
+            runCatching { retriever.release() }
         }
-        VideoMeta(frame.asImageBitmap(), durationMs)
-    } finally {
-        runCatching { retriever.release() }
     }
 }.getOrNull()
 

@@ -575,7 +575,9 @@ class ChatViewModel @Inject constructor(
 
     fun onComposerChanged(value: TextFieldValue) {
         val textChanged = value.text != composerValue.text
-        composerValue = value
+        // Route text changes through updateComposer so a half-typed message survives
+        // an OS process kill; cursor-only moves skip the persistence write.
+        if (textChanged) updateComposer(value) else composerValue = value
         updateMentionSuggestions(value)
         if (session == null || !textChanged) return // cursor moves aren't typing
         if (value.text.isBlank()) {

@@ -26,6 +26,7 @@ import mk.ry.redollars.data.db.toDto
 import mk.ry.redollars.data.db.toEntity
 import mk.ry.redollars.di.ApplicationScope
 import kotlinx.coroutines.Job
+import kotlin.concurrent.Volatile
 import mk.ry.redollars.net.DollarsWs
 import mk.ry.redollars.net.MessageDto
 import mk.ry.redollars.net.NotificationItem
@@ -47,6 +48,7 @@ import mk.ry.redollars.net.WsEvent
 import mk.ry.redollars.net.WsUser
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -257,7 +259,8 @@ class MessageRepository @Inject constructor(
     private val _notifications = MutableStateFlow<List<NotificationItem>>(emptyList())
     val notifications: StateFlow<List<NotificationItem>> = _notifications.asStateFlow()
 
-    private val typingClearJobs = HashMap<Long, Job>()
+    // Touched from the WS reader thread and the app-scope coroutines alike.
+    private val typingClearJobs = ConcurrentHashMap<Long, Job>()
     private var ownUid = 0L
 
     /** (Re)identify the WebSocket as [uid]. Catch-up runs on the Status(true) transition.
@@ -371,6 +374,7 @@ class MessageRepository @Inject constructor(
     private val _onlineUsers = MutableStateFlow<Set<Long>>(emptySet())
     val onlineUsers: StateFlow<Set<Long>> = _onlineUsers.asStateFlow()
 
+    @Volatile
     private var presenceSubscribed = setOf<Long>()
 
     /** Diff-subscribe to [want]; the server then answers a query and pushes updates. */

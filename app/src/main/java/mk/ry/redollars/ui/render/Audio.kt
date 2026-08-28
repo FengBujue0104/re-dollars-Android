@@ -54,6 +54,7 @@ import okhttp3.Request
 import java.security.MessageDigest
 import java.io.File
 import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -81,7 +82,8 @@ class AudioPlayer @Inject constructor(
 
     /** Probed fallback durations (ms) by source, for containers MediaPlayer can't
      *  measure — Chrome's MediaRecorder emits WebM with no duration header. */
-    private val probedDurations = HashMap<String, Int>()
+    // Written on Main, read from load-job coroutines on Default.
+    private val probedDurations = ConcurrentHashMap<String, Int>()
 
     private val _nowPlaying = MutableStateFlow<String?>(null)
     val nowPlaying: StateFlow<String?> = _nowPlaying.asStateFlow()
