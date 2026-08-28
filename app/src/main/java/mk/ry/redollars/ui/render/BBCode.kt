@@ -1,8 +1,11 @@
 package mk.ry.redollars.ui.render
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -10,10 +13,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +27,7 @@ import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +55,15 @@ import androidx.compose.ui.unit.em
 import coil3.compose.AsyncImage
 import mk.ry.redollars.bmo.BmoImage
 import mk.ry.redollars.net.ReplyDetails
+
+/** Long-press on media embedded in a message (inline images, stickers): the chat bubble
+ *  provides this so pressing media pops the same context menu as pressing the bubble. */
+val LocalBubbleLongPress = compositionLocalOf<(() -> Unit)?> { null }
+
+/** Auto-load media previews (界面设置): off turns `[img]` blocks into tap-to-load
+ *  placeholders and stops video poster fetching (already-cached frames still render).
+ *  Stickers/smilies stay inline text-sized media and keep loading. */
+val LocalAutoLoadMedia = compositionLocalOf { true }
 
 // ---------------------------------------------------------------------------
 // Block-level parsing
@@ -173,14 +188,19 @@ private fun smileyInline(src: String, large: Boolean): InlineTextContent {
 private val STICKER_TAG =
     Regex("""\[(?:emoji|sticker)\](.+?)\[/(?:emoji|sticker)\]""", RegexOption.IGNORE_CASE)
 
+@OptIn(ExperimentalFoundationApi::class)
 private fun stickerInline(src: String): InlineTextContent =
     InlineTextContent(Placeholder(6.em, 6.em, PlaceholderVerticalAlign.TextCenter)) {
         val openViewer = LocalImageViewer.current
+        val onLongPress = LocalBubbleLongPress.current
         AsyncImage(
             model = src,
             contentDescription = null,
             contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize().clickable { openViewer(src) },
+            modifier = Modifier.fillMaxSize().combinedClickable(
+                onClick = { openViewer(src) },
+                onLongClick = { onLongPress?.invoke() },
+            ),
         )
     }
 
@@ -337,22 +357,66 @@ private fun CollapsibleInlineText(text: String) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ImageStack(urls: List<String>) {
     val openViewer = LocalImageViewer.current
+    val onLongPress = LocalBubbleLongPress.current
+    val autoLoad = LocalAutoLoadMedia.current
     Column(Modifier.padding(vertical = 4.dp)) {
         urls.forEach { url ->
-            AsyncImage(
-                model = url,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .padding(bottom = 4.dp)
-                    .sizeIn(maxWidth = 240.dp, maxHeight = 280.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable { openViewer(url) },
-            )
+            var forceShow by remember(url) { mutableStateOf(false) }
+            if (autoLoad || forceShow) {
+                AsyncImage(
+                    model = url,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .padding(bottom = 4.dp)
+                        .sizeIn(maxWidth = 240.dp, maxHeight = 280.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .combinedClickable(
+                            onClick = { openViewer(url) },
+                            onLongClick = { onLongPress?.invoke() },
+                        ),
+                )
+            } else {
+                UnloadedMediaPlaceholder(
+                    modifier = Modifier.padding(bottom = 4.dp),
+                    onTap = { forceShow = true },
+                    onLongPress = { onLongPress?.invoke() },
+                )
+            }
         }
+    }
+}
+
+/** Tap-to-load stand-in for `[img]` blocks when auto-loading previews is off. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun UnloadedMediaPlaceholder(
+    modifier: Modifier = Modifier,
+    onTap: () -> Unit,
+    onLongPress: (() -> Unit)?,
+) {
+    val cs = MaterialTheme.colorScheme
+    Box(
+        modifier
+            .widthIn(max = 240.dp)
+            .heightIn(min = 90.dp)
+            .background(cs.surfaceVariant, RoundedCornerShape(10.dp))
+            .combinedClickable(
+                onClick = onTap,
+                onLongClick = { onLongPress?.invoke() },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "图片未加载 · 点击查看",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
+            color = cs.onSurfaceVariant,
+        )
     }
 }
 

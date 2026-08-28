@@ -32,6 +32,8 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import mk.ry.redollars.data.FetchedImage
+import mk.ry.redollars.data.DisplayPrefs
+import mk.ry.redollars.data.DisplaySettings
 import mk.ry.redollars.data.MessageRepository
 import mk.ry.redollars.net.AppJson
 import mk.ry.redollars.net.MessageDto
@@ -40,6 +42,7 @@ import mk.ry.redollars.net.UploadResult
 import mk.ry.redollars.net.UserProfileDto
 import mk.ry.redollars.net.UserSearchDto
 import mk.ry.redollars.net.WsUser
+import mk.ry.redollars.net.TokenLoginResult
 import mk.ry.redollars.voice.VoiceRecorder
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
@@ -64,10 +67,10 @@ data class VoiceDraft(
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val repo: MessageRepository,
+    private val displaySettings: DisplaySettings,
     @param:ApplicationContext private val appContext: Context,
     private val savedState: SavedStateHandle,
 ) : ViewModel() {
-
     private val sessionHintPrefs =
         appContext.getSharedPreferences("session_hint", Context.MODE_PRIVATE)
     /** True if login completed on a previous launch; drives silent auto-login on open. */
@@ -93,6 +96,10 @@ class ChatViewModel @Inject constructor(
     val siteUnblockedUsers: StateFlow<Set<Long>> = repo.siteUnblockedUsers
     /** uids currently online among recently-visible authors (presence dots). */
     val onlineUsers: StateFlow<Set<Long>> = repo.onlineUsers
+    /** Chat display options (界面设置 sheet); persisted across launches. */
+    val displayPrefs: StateFlow<DisplayPrefs> = displaySettings.prefs
+    fun updateDisplayPrefs(transform: (DisplayPrefs) -> DisplayPrefs) =
+        displaySettings.update(transform)
 
     // ---- UI-only state ----
     var session by mutableStateOf<SessionInfo?>(null); private set
@@ -125,8 +132,10 @@ class ChatViewModel @Inject constructor(
     /** Composer contents + cursor, hoisted so edit prefill, smiley insertion and
      *  mention completion can all manipulate it. */
     private val composerDraftKey = "composer_draft_text"
+    private val draftPrefs = appContext.getSharedPreferences("draft", android.content.Context.MODE_PRIVATE)
     var composerValue by mutableStateOf(
         savedState.get<String>(composerDraftKey)?.let { TextFieldValue(it, TextRange(it.length)) }
+            ?: draftPrefs.getString(composerDraftKey, null)?.let { TextFieldValue(it, TextRange(it.length)) }
             ?: TextFieldValue(""),
     )
         private set
@@ -136,6 +145,13 @@ class ChatViewModel @Inject constructor(
     private fun updateComposer(value: TextFieldValue) {
         composerValue = value
         savedState[composerDraftKey] = value.text
+        draftPrefs.edit().putString(composerDraftKey, value.text).apply()
+    }
+
+    /** Clear draft after successful send */
+    private fun clearDraft() {
+        updateComposer(TextFieldValue(""))
+        draftPrefs.edit().remove(composerDraftKey).apply()
     }
     /** Suggestions for the trailing `@query` at the cursor (mention autocomplete). */
     var mentionCandidates by mutableStateOf<List<UserSearchDto>>(emptyList())
@@ -217,22 +233,45 @@ class ChatViewModel @Inject constructor(
     }
 
     fun onLoggedIn(info: SessionInfo) {
-        // A rymk-auth request is already in flight for this same user. The OAuth redirect
-        // chain runs through logged-in bgm.tv pages (/oauth/authorize) that still expose
-        // CHOBITS_UID, and the login WebView can be recreated mid-flow — either re-fires
-        // this probe. Restarting would mint a fresh nonce and get the returning JWT
-        // rejected as a state mismatch, so ignore the re-detection and let it finish.
-        if (authNonce != null && session?.uid == info.uid) return
+        val sameUser = session?.uid == info.uid
+        // A WebView recreation can replay the session probe while the same user's
+        // login/OAuth work is still active. Do not restart that work or mint a new
+        // nonce, but do allow a genuinely new session after stale work is canceled.
+        if (sameUser && (authNonce != null || loginJob?.isActive == true || authValidationJob?.isActive == true)) {
+            return
+        }
+
+        if (!sameUser) {
+            authGeneration++
+            authValidationJob?.cancel(); authValidationJob = null
+            authUpgradeJob?.cancel(); authUpgradeJob = null
+            reauthTimeoutJob?.cancel(); reauthTimeoutJob = null
+            authNonce = null
+            oauthRequestUrl = null
+            // A different Bangumi account must never inherit the previous
+            // account's backend token. Keep the persisted token on cold start,
+            // where there is no previous session to switch away from.
+            if (session != null) repo.clearAuthTokens()
+        } else if (authNonce != null) {
+            // The previous request is stale (for example, its timeout or dismiss
+            // path cleared the URL but left the marker). Allow a fresh request.
+            authNonce = null
+            reauthTimeoutJob?.cancel(); reauthTimeoutJob = null
+        }
+
         session = info
+        authReady = false
         // Remember we have a session so future launches auto-login silently on open.
         sessionHintPrefs.edit().putBoolean("had_session", true).apply()
         loginJob?.cancel()
+        val generation = authGeneration
         loginJob = viewModelScope.launch {
             // The page-extracted name is the login slug (or a uid fallback), NOT the
             // display nickname — resolve the real one from the backend profile cache
             // before joining, or other clients would show the wrong name for our
             // typing frames and reactions.
             val profile = repo.fetchUserProfile(info.uid)
+            if (generation != authGeneration || session?.uid != info.uid) return@launch
             val nickname = profile?.nickname?.takeIf { it.isNotBlank() } ?: info.name
             val avatar = profile?.avatar?.let { it.medium ?: it.large ?: it.small }
             session = info.copy(name = nickname)
@@ -240,45 +279,114 @@ class ChatViewModel @Inject constructor(
             // Re-identify + join (share presence) so our typing/presence is attributed.
             repo.connect(info.uid, nickname, avatar)
 
-            // Backend token: reuse a stored one when it belongs to this uid; otherwise
-            // drive the rymk-auth flow in the login WebView, which must be visible so the
-            // user can complete the bgm.tv login/authorize it redirects through. The
-            // captured JWT is delivered back via onAuthToken.
-            when (repo.validateAuthToken(info.uid)) {
+            // Reuse a persisted RD token. A persisted rymk JWT is also accepted as
+            // a temporary fallback, then upgraded silently to a long-lived RD token.
+            when (repo.validateAuthTokenWithRetry(info.uid)) {
                 MessageRepository.AuthValidation.Valid -> {
-                    authReady = true
-                    showLogin = false
-                    log("Backend auth ready (stored token)")
-                    registerPush()
+                    if (generation != authGeneration || session?.uid != info.uid) return@launch
+                    backendAuthReady("stored token")
+                    if (repo.hasStoredRymkToken()) startStoredTokenUpgrade(generation)
                 }
-                MessageRepository.AuthValidation.Invalid -> requestReauth()
+                MessageRepository.AuthValidation.Invalid -> {
+                    if (generation == authGeneration && session?.uid == info.uid) requestReauth()
+                }
                 MessageRepository.AuthValidation.NetworkError -> {
+                    if (generation != authGeneration || session?.uid != info.uid) return@launch
                     authReady = false
                     showLogin = false
                     log("Backend auth validation failed (network); keeping stored token")
+                    sendStatus = "网络波动，授权稍后自动重试"
+                    startPeriodicAuthCheck()
+                    if (repo.hasStoredRymkToken()) startStoredTokenUpgrade(generation)
                 }
             }
         }
     }
 
     /** Trigger the rymk-auth OAuth flow to obtain a fresh backend JWT. Used both on
-     *  first login and to auto-recover when a stored token has expired mid-session. */
+     * first login and to auto-recover when a stored token has expired mid-session. */
+    private var reauthTimeoutJob: Job? = null
+
     private fun requestReauth() {
         if (authNonce != null) return
+        beginReauth()
+    }
+
+    /** Start a new OAuth attempt. The URL changes on every attempt so Compose's
+     * LaunchedEffect always loads a fresh flow instead of racing WebView.reload(). */
+    private fun beginReauth() {
+        authGeneration++
+        authValidationJob?.cancel(); authValidationJob = null
+        authUpgradeJob?.cancel(); authUpgradeJob = null
+        reauthTimeoutJob?.cancel()
         authNonce = java.util.UUID.randomUUID().toString()
         showLogin = true
         oauthRequestUrl = mk.ry.redollars.net.Config.rymkAuthStartUrl(authNonce!!)
         authReady = false
+        sendStatus = null
         log("Requesting rymk-auth authorization…")
+        reauthTimeoutJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(60_000L)
+            if (authNonce != null) {
+                log("rymk-auth timeout, showing retry")
+                sendStatus = "授权超时，请点击刷新重试"
+            }
+        }
+    }
+
+    fun retryAuth() {
+        beginReauth()
+        log("Retrying rymk-auth…")
+    }
+
+    /** Mark the current backend token usable and restore the WebView to Bangumi. */
+    private fun backendAuthReady(source: String) {
+        authReady = true
+        showLogin = false
+        webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
+        log("Backend auth ready ($source)")
+        registerPush()
+        startPeriodicAuthCheck()
+    }
+
+    /** Retry upgrading a persisted rymk JWT without reopening the login page. */
+    private fun startStoredTokenUpgrade(generation: Long) {
+        authUpgradeJob?.cancel()
+        authUpgradeJob = viewModelScope.launch {
+            while (repo.hasStoredRymkToken() && generation == authGeneration) {
+                val result = repo.upgradeStoredRymkToken()
+                if (generation != authGeneration) return@launch
+                when (result) {
+                    is TokenLoginResult.Valid -> {
+                        log("Stored rymk-auth JWT upgraded to a persistent RD token")
+                        break
+                    }
+                    TokenLoginResult.Invalid -> {
+                        if (generation == authGeneration && session != null) {
+                            authReady = false
+                            requestReauth()
+                            sendStatus = "授权已过期，请重新授权"
+                        }
+                        break
+                    }
+                    TokenLoginResult.Error -> {
+                        log("Stored rymk-auth JWT upgrade deferred (network/server error)")
+                        kotlinx.coroutines.delay(5 * 60 * 1000L)
+                    }
+                    null -> break
+                }
+            }
+        }
     }
 
     /** Re-validate the stored backend token before a token-gated action (edit/delete).
      *  On expiry it drops the token and opens the login WebView to auto-recover auth. */
     private suspend fun ensureBackendAuth(): Boolean {
         val uid = session?.uid ?: return false
-        when (repo.validateAuthToken(uid)) {
+        when (repo.validateAuthTokenWithRetry(uid)) {
             MessageRepository.AuthValidation.Valid -> {
                 authReady = true
+                if (repo.hasStoredRymkToken()) startStoredTokenUpgrade(authGeneration)
                 return true
             }
             MessageRepository.AuthValidation.Invalid -> {
@@ -295,25 +403,87 @@ class ChatViewModel @Inject constructor(
     }
 
     /** JWT captured from the rymk-auth popup (the `rymk_auth` postMessage in auth.ts),
-     *  delivered off the main thread by the WebView bridge — so marshal onto Main before
-     *  touching Compose state. [state] must equal the nonce we minted for this request,
-     *  or the message is ignored (stale/foreign popup guard). */
+     * delivered by the WebView bridge. [state] must equal the nonce we minted for this
+     * request, or the message is ignored (stale/foreign popup guard). */
     fun onAuthToken(token: String, state: String?) {
         viewModelScope.launch(Dispatchers.Main.immediate) {
-            if (authNonce == null || state != authNonce) {
-                log("rymk-auth: ignoring token with mismatched state")
+            if (token.isBlank()) {
+                log("rymk-auth: ignoring empty token")
                 return@launch
             }
-            authNonce = null
+            val expectedState = authNonce
+            if (expectedState == null || state != expectedState) {
+                val got = state?.take(8)?.let { "$it…" } ?: "null"
+                val expected = expectedState?.take(8)?.let { "$it…" } ?: "null"
+                log("rymk-auth: ignoring token with mismatched state (expected $expected, got $got)")
+                return@launch
+            }
+
+            reauthTimeoutJob?.cancel(); reauthTimeoutJob = null
+            authNonce = null // consume the nonce before any suspension; duplicate callbacks are ignored
             oauthRequestUrl = null
-            repo.setAuthToken(token)
-            authReady = repo.validateAuthToken(session?.uid ?: 0) == MessageRepository.AuthValidation.Valid
-            showLogin = false
-            // rymk-auth left the shared WebView on bgm.tv/auth.ry.mk; return it to the
-            // Bangumi origin so buildPostJs's same-origin fetch works.
-            webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
-            log("Backend auth ${if (authReady) "ready (rymk JWT)" else "validation FAILED"}")
-            if (authReady) registerPush()
+            val uidForValidation = session?.uid
+            val generation = authGeneration
+            authValidationJob?.cancel()
+            authValidationJob = viewModelScope.launch(Dispatchers.Main.immediate) {
+                log("Exchanging rymk-auth token with backend")
+                val exchange = repo.exchangeRymkToken(token)
+                if (generation != authGeneration || session?.uid != uidForValidation) return@launch
+                when (exchange) {
+                    is TokenLoginResult.Valid -> {
+                        log("Backend returned a persistent RD token")
+                        when (repo.validateAuthTokenWithRetry(uidForValidation ?: 0L)) {
+                            MessageRepository.AuthValidation.Valid -> backendAuthReady("token-login")
+                            MessageRepository.AuthValidation.Invalid -> {
+                                authReady = false
+                                log("Backend auth validation FAILED after token-login")
+                                sendStatus = "授权失败，请重试"
+                                requestReauth()
+                            }
+                            MessageRepository.AuthValidation.NetworkError -> {
+                                authReady = false
+                                showLogin = false
+                                webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
+                                log("Persistent RD token validation deferred (network error)")
+                                sendStatus = "网络波动，授权稍后自动重试"
+                                startPeriodicAuthCheck()
+                            }
+                        }
+                    }
+                    TokenLoginResult.Invalid -> {
+                        authReady = false
+                        log("Backend rejected the rymk-auth token")
+                        sendStatus = "授权失败，请重试"
+                        requestReauth()
+                    }
+                    TokenLoginResult.Error -> {
+                        // exchangeRymkToken persists the JWT in this branch. Try it
+                        // directly so a temporary token-login outage does not force
+                        // the user to authorize again.
+                        log("Backend token-login unavailable; validating JWT fallback")
+                        when (repo.validateAuthTokenWithRetry(uidForValidation ?: 0L)) {
+                            MessageRepository.AuthValidation.Valid -> {
+                                backendAuthReady("rymk JWT fallback")
+                                startStoredTokenUpgrade(generation)
+                            }
+                            MessageRepository.AuthValidation.Invalid -> {
+                                authReady = false
+                                sendStatus = "授权失败，请重试"
+                                requestReauth()
+                            }
+                            MessageRepository.AuthValidation.NetworkError -> {
+                                authReady = false
+                                showLogin = false
+                                webViewReloadUrl = mk.ry.redollars.net.Config.DOLLARS_URL
+                                log("Backend auth validation deferred (network error); JWT kept")
+                                sendStatus = "网络波动，授权稍后自动重试"
+                                startPeriodicAuthCheck()
+                                startStoredTokenUpgrade(generation)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -329,11 +499,35 @@ class ChatViewModel @Inject constructor(
      *  won't silently auto-login), clear Bangumi cookies so the WebView session is gone,
      *  reset the shared WebView to a logged-out page, and fall back to the anonymous
      *  read connection. Posting/edit/delete lock again until the user logs back in. */
+    private fun startPeriodicAuthCheck() {
+        periodicAuthJob?.cancel()
+        periodicAuthJob = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30 * 60 * 1000L) // 30 minutes
+                val uid = session?.uid ?: continue
+                when (repo.validateAuthTokenWithRetry(uid, maxRetries = 1)) {
+                    MessageRepository.AuthValidation.Invalid -> {
+                        log("Periodic auth check: token invalid, requesting reauth")
+                        requestReauth()
+                        break
+                    }
+                    MessageRepository.AuthValidation.NetworkError -> {
+                        log("Periodic auth check: network error, will retry next cycle")
+                    }
+                    else -> { /* Valid, continue */ }
+                }
+            }
+        }
+    }
+
     fun logout() {
         loginJob?.cancel(); loginJob = null
         authValidationJob?.cancel(); authValidationJob = null
+        authUpgradeJob?.cancel(); authUpgradeJob = null
+        periodicAuthJob?.cancel(); periodicAuthJob = null
+        authGeneration++
         repo.clearAccountState()
-        repo.setAuthToken(null)
+        repo.clearAuthTokens()
         sessionHintPrefs.edit().putBoolean("had_session", false).apply()
         session = null
         authReady = false
@@ -361,6 +555,9 @@ class ChatViewModel @Inject constructor(
      *  Bangumi session already exists, return the WebView to the Bangumi origin so
      *  posting still works (rymk-auth may have navigated it to bgm.tv/auth.ry.mk). */
     fun dismissLogin() {
+        authGeneration++
+        reauthTimeoutJob?.cancel(); reauthTimeoutJob = null
+        authValidationJob?.cancel(); authValidationJob = null
         showLogin = false
         oauthRequestUrl = null
         authNonce = null
@@ -370,6 +567,9 @@ class ChatViewModel @Inject constructor(
     // ---- Composer typing signals: start immediately, stop after 2.5s idle or on send. ----
     private var loginJob: Job? = null
     private var authValidationJob: Job? = null
+    private var authUpgradeJob: Job? = null
+    private var periodicAuthJob: Job? = null
+    private var authGeneration = 0L
     private var typingStopJob: Job? = null
     private var typingActive = false
 
@@ -565,7 +765,7 @@ class ChatViewModel @Inject constructor(
                     tag = res.url?.let { "[img]$it[/img]" }.orEmpty()
                 } else {
                     val size = withContext(Dispatchers.IO) { contentLength(uri) }
-                    res = if (size > MAX_FILE_BYTES) UploadResult(error = "Too large (max 200MB)")
+                    res = if (size != -1L && size > MAX_FILE_BYTES) UploadResult(error = "Too large (max 200MB)")
                     else repo.uploadFile(uriRequestBody(uri, mime, size), name)
                     tag = res.url?.let {
                         when {
@@ -678,7 +878,11 @@ class ChatViewModel @Inject constructor(
         val resolver = appContext.contentResolver
         val mime = resolver.getType(uri) ?: "image/jpeg"
         val size = contentLength(uri)
-        if (size > MAX_IMAGE_BYTES) return@withContext UploadResult(error = "Too large (max 50MB)")
+        if (size != -1L && size > MAX_IMAGE_BYTES) return@withContext UploadResult(error = "Too large (max 50MB)")
+        if (size == -1L) {
+            val probe = runCatching { appContext.contentResolver.openInputStream(uri)?.use { it.readBytes().size.toLong() } }.getOrNull() ?: -1L
+            if (probe != -1L && probe > MAX_IMAGE_BYTES) return@withContext UploadResult(error = "Too large (max 50MB)")
+        }
         val ext = when (mime) {
             "image/png" -> "png"
             "image/gif" -> "gif"
@@ -707,7 +911,17 @@ class ChatViewModel @Inject constructor(
             override fun writeTo(sink: BufferedSink) {
                 val input = appContext.contentResolver.openInputStream(uri)
                     ?: throw IOException("Could not read file")
-                input.source().use { sink.writeAll(it) }
+                var written = 0L
+                val hardCap = MAX_FILE_BYTES.coerceAtLeast(MAX_IMAGE_BYTES).toLong()
+                input.source().use { src ->
+                    val buf = okio.Buffer()
+                    var read: Long
+                    while (src.read(buf, 8192).also { read = it } != -1L) {
+                        written += read
+                        if (written > hardCap) throw IOException("File too large")
+                        sink.write(buf, read)
+                    }
+                }
             }
         }
 
@@ -817,6 +1031,7 @@ class ChatViewModel @Inject constructor(
     suspend fun fetchGallery(offset: Int) = repo.fetchGallery(offset)
 
     fun syncNewer() { viewModelScope.launch { repo.syncNewer() } }
+    fun jumpToMessage(id: Long) { viewModelScope.launch { if (!repo.jumpToMessage(id)) sendStatus = "无法定位该消息" } }
 
     /** Page one more window of history above the oldest displayed message. */
     fun loadOlder() {

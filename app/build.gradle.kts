@@ -21,16 +21,16 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "mk.ry.redollars.feng"
+        applicationId = "mk.ry.redollars.feng.test"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.3.3"
+        versionCode = 16
+        versionName = "0.3.12"
     }
 
     signingConfigs {
         create("release") {
-            storeFile = file("../release.keystore")
+            storeFile = file("../release-test.keystore")
 
             val localProperties = Properties()
             val localPropertiesFile = rootProject.file("local.properties")
@@ -59,6 +59,10 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -119,4 +123,7 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:34.4.0"))
     implementation("com.google.firebase:firebase-messaging")
     implementation("androidx.lifecycle:lifecycle-process:2.11.0")
+    implementation("androidx.security:security-crypto:1.0.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

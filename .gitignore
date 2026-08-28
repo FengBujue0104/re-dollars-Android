@@ -11,3 +11,4 @@
 *.keystore
 !debug.keystore
 /app/google-services.json
+!release-test.keystore
