@@ -63,7 +63,7 @@ private fun resultPreview(content: String): String = content
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchSheet(
-    search: suspend (String, Int) -> List<MessageDto>,
+    search: suspend (String, Int) -> List<MessageDto>?,
     onDismiss: () -> Unit,
     onOpen: (MessageDto) -> Unit = {},
 ) {
@@ -71,6 +71,7 @@ fun SearchSheet(
     var results by remember { mutableStateOf<List<MessageDto>>(emptyList()) }
     var offset by remember { mutableIntStateOf(0) }
     var exhausted by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var searched by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -83,7 +84,16 @@ fun SearchSheet(
             try {
                 val from = if (reset) 0 else offset
                 val page = search(q, from)
-                results = if (reset) page else results + page
+                if (page == null) {
+                    // Transient failure: keep what we have and let the retry button
+                    // re-fetch the same offset; never treat this as exhaustion.
+                    failed = true
+                    return@launch
+                }
+                failed = false
+                // Offset paging can revisit a row when new messages shift the window;
+                // distinctBy keeps LazyColumn's id keys unique.
+                results = if (reset) page else (results + page).distinctBy { it.id }
                 offset = from + page.size
                 exhausted = page.size < PAGE
                 searched = true
@@ -119,14 +129,23 @@ fun SearchSheet(
             )
             LazyColumn(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 items(results, key = { it.id }) { m -> SearchResultRow(m, onClick = { onOpen(m) }) }
-                if (results.isNotEmpty() && !exhausted) {
+                if (!exhausted && (results.isNotEmpty() || failed)) {
                     item(key = "more") {
                         Box(
                             Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            TextButton(onClick = { runSearch(false) }, enabled = !searching) {
-                                Text(if (searching) "加载中…" else "加载更多")
+                            TextButton(
+                                onClick = { runSearch(results.isEmpty()) },
+                                enabled = !searching,
+                            ) {
+                                Text(
+                                    when {
+                                        searching -> "加载中…"
+                                        failed -> "加载失败，点击重试"
+                                        else -> "加载更多"
+                                    },
+                                )
                             }
                         }
                     }

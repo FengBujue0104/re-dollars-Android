@@ -314,6 +314,11 @@ fun ChatComposer(
                             shape = RoundedCornerShape(24.dp),
                         )
                         Spacer(Modifier.width(8.dp))
+                        // A just-recorded clip that is still uploading blocks send:
+                        // beginSend would drop the un-ready voice tag and delete the
+                        // file mid-upload, silently losing the message.
+                        val voiceUploading =
+                            voiceDraft != null && voiceDraft.url == null && voiceDraft.error == null
                         FilledIconButton(
                             onClick = {
                                 val trimmed = value.text.trim()
@@ -322,7 +327,8 @@ fun ChatComposer(
                                     onSend(trimmed)
                                 }
                             },
-                            enabled = value.text.isNotBlank() || voiceDraft?.url != null,
+                            enabled = (value.text.isNotBlank() || voiceDraft?.url != null) &&
+                                !voiceUploading,
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }

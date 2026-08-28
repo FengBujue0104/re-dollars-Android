@@ -50,6 +50,7 @@ fun GallerySheet(
 ) {
     var items by remember { mutableStateOf<List<GalleryItemDto>>(emptyList()) }
     var hasMore by remember { mutableStateOf(true) }
+    var failed by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var previewVideo by remember { mutableStateOf<String?>(null) }
     val openViewer = LocalImageViewer.current
@@ -62,10 +63,13 @@ fun GallerySheet(
             try {
                 val page = fetch(items.size)
                 if (page != null) {
+                    failed = false
                     items = items + page.items
                     hasMore = page.hasMore
                 } else {
-                    hasMore = false
+                    // Transient failure: keep hasMore so the button stays retryable
+                    // instead of permanently ending pagination.
+                    failed = true
                 }
             } finally {
                 loading = false
@@ -109,7 +113,9 @@ fun GallerySheet(
                         if (loading) {
                             CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                         } else {
-                            TextButton(onClick = { loadMore() }) { Text("加载更多") }
+                            TextButton(onClick = { loadMore() }) {
+                                Text(if (failed) "加载失败，点击重试" else "加载更多")
+                            }
                         }
                     }
                 }

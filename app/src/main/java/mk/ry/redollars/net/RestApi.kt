@@ -88,17 +88,25 @@ class RestApi(private val client: OkHttpClient) {
         }
     }
 
-    /** GET /api/v1/messages?before_id=&limit= — messages older than a db id (history paging). */
-    suspend fun fetchHistory(beforeId: Long, limit: Int = 50): List<MessageDto> = withContext(Dispatchers.IO) {
+    /**
+     * GET /api/v1/messages?before_id=&limit= — messages older than a db id (history paging).
+     * Null on network/HTTP/parse failure so callers can retry; an empty list means the
+     * fetch succeeded and history is genuinely exhausted.
+     */
+    suspend fun fetchHistory(beforeId: Long, limit: Int = 50): List<MessageDto>? = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("${Config.BACKEND_API_URL}/messages?before_id=$beforeId&limit=$limit")
             .header("User-Agent", Config.USER_AGENT)
             .get()
             .build()
-        client.newCall(req).execute().use { res ->
-            val body = res.body?.string().orEmpty()
-            if (!res.isSuccessful || body.isBlank()) return@withContext emptyList()
-            runCatching { AppJson.decodeFromString<List<MessageDto>>(body) }.getOrDefault(emptyList())
+        try {
+            client.newCall(req).execute().use { res ->
+                val body = res.body?.string().orEmpty()
+                if (!res.isSuccessful || body.isBlank()) return@withContext null
+                runCatching { AppJson.decodeFromString<List<MessageDto>>(body) }.getOrNull()
+            }
+        } catch (_: IOException) {
+            null
         }
     }
 
@@ -247,8 +255,9 @@ class RestApi(private val client: OkHttpClient) {
         client.newCall(req).execute().use { it.isSuccessful }
     }
 
-    /** GET /api/v1/search?q=&offset=&limit= — full-text search, newest first. */
-    suspend fun searchMessages(query: String, offset: Int, limit: Int = 20): List<MessageDto> =
+    /** GET /api/v1/search?q=&offset=&limit= — full-text search, newest first.
+     *  Null on failure so callers keep their results and can retry the same offset. */
+    suspend fun searchMessages(query: String, offset: Int, limit: Int = 20): List<MessageDto>? =
         withContext(Dispatchers.IO) {
             val q = java.net.URLEncoder.encode(query, "UTF-8")
             val req = Request.Builder()
@@ -256,11 +265,15 @@ class RestApi(private val client: OkHttpClient) {
                 .header("User-Agent", Config.USER_AGENT)
                 .get()
                 .build()
-            client.newCall(req).execute().use { res ->
-                val body = res.body?.string().orEmpty()
-                if (!res.isSuccessful || body.isBlank()) return@withContext emptyList()
-                runCatching { AppJson.decodeFromString<SearchResponse>(body) }.getOrNull()
-                    ?.takeIf { it.status }?.results ?: emptyList()
+            try {
+                client.newCall(req).execute().use { res ->
+                    val body = res.body?.string().orEmpty()
+                    if (!res.isSuccessful || body.isBlank()) return@withContext null
+                    runCatching { AppJson.decodeFromString<SearchResponse>(body) }.getOrNull()
+                        ?.takeIf { it.status }?.results
+                }
+            } catch (_: IOException) {
+                null
             }
         }
 

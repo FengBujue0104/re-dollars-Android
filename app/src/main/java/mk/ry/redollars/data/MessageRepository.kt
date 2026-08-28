@@ -303,9 +303,9 @@ class MessageRepository @Inject constructor(
     suspend fun searchUsers(query: String): List<UserSearchDto> =
         runCatching { rest.searchUsers(query) }.getOrDefault(emptyList())
 
-    /** Full-text message search (newest first). */
-    suspend fun searchMessages(query: String, offset: Int): List<MessageDto> =
-        runCatching { rest.searchMessages(query, offset) }.getOrDefault(emptyList())
+    /** Full-text message search (newest first). Null on network failure (retryable). */
+    suspend fun searchMessages(query: String, offset: Int): List<MessageDto>? =
+        runCatching { rest.searchMessages(query, offset) }.getOrNull()
 
     /** One page of the chat media wall. */
     suspend fun fetchGallery(offset: Int): GalleryResponse? =
@@ -707,7 +707,7 @@ class MessageRepository @Inject constructor(
      */
     suspend fun jumpToMessage(targetId: Long): Boolean {
         return try {
-            val before = runCatching { rest.fetchHistory(targetId + PAGE_SIZE, PAGE_SIZE) }.getOrDefault(emptyList())
+            val before = rest.fetchHistory(targetId + PAGE_SIZE, PAGE_SIZE).orEmpty()
             val after = runCatching { rest.fetchNewer(targetId - 1, PAGE_SIZE) }.getOrDefault(emptyList())
             val window = (before + after).sortedBy { it.id }
             if (window.isEmpty()) return false
@@ -723,7 +723,13 @@ class MessageRepository @Inject constructor(
             displayLimit.value += PAGE_SIZE
             return PAGE_SIZE
         }
-        val fetched = runCatching { rest.fetchHistory(beforeId, PAGE_SIZE) }.getOrDefault(emptyList())
+        // Null = fetch failed (network etc.): report 0 so the UI can retry. -1 is
+        // reserved for a real end of history and must not fire on a transient error.
+        val fetched = rest.fetchHistory(beforeId, PAGE_SIZE)
+        if (fetched == null) {
+            log("History: fetch failed before id=$beforeId (cached older=$cached)")
+            return 0
+        }
         if (fetched.isNotEmpty()) dao.upsertAll(fetched.map { it.toEntity() })
         log("History: +${fetched.size} fetched before id=$beforeId (cached older=$cached)")
         val available = cached + fetched.size
