@@ -133,14 +133,16 @@ fun MessageRow(
     val swipeModifier = if (!m.isDeleted) {
         Modifier.pointerInput(m.id, endAligned) {
             val maxPull = 60.dp.toPx()
-            val ease = 150.dp.toPx()
+            val ease = 90.dp.toPx()
             val touchSlop = viewConfiguration.touchSlop
             // The bubble only claims a gesture when horizontal intent is unambiguous:
-            // 3× plain touch slop of horizontal travel AND 2:1 over any vertical drift.
-            // detectHorizontalDragGestures claimed on bare slop, so a list scroll with
-            // slight sideways jitter crossed horizontal slop first and stole (and
-            // killed) the vertical page swipe.
-            val claimSlop = touchSlop * 3
+            // 1.5× plain touch slop of horizontal travel AND 2:1 over any vertical
+            // drift. detectHorizontalDragGestures claimed on bare slop, so a list
+            // scroll with slight sideways jitter crossed horizontal slop first and
+            // stole (and killed) the vertical page swipe. The dominance ratio is what
+            // protects scrolls — a genuine reply drag blows past it, scroll jitter
+            // never does — so the distance bar stays low enough to feel responsive.
+            val claimSlop = touchSlop * 1.5f
             val dominance = 2f
             var raw = 0f
             awaitEachGesture {
