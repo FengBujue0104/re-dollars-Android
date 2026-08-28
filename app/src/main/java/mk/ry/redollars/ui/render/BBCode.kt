@@ -221,25 +221,31 @@ private fun buildInline(text: String, linkColor: Color, maskBg: Color): InlineRe
         if (span == null) b.append(chunk) else b.withStyle(span) { append(chunk) }
     }
 
-    fun walk(b: AnnotatedString.Builder, src: String, styles: Set<St>) {
+    fun walk(b: AnnotatedString.Builder, src: String, styles: Set<St>, depth: Int = 0) {
+        // Pathological nesting ([b][b][b]…) recurses once per level; cap it so a
+        // crafted message can't overflow the stack — beyond the cap render flat.
+        if (depth > 32) {
+            appendStyled(b, src, styles)
+            return
+        }
         var i = 0
         for (m in INLINE_REGEX.findAll(src)) {
             if (m.range.first > i) appendStyled(b, src.substring(i, m.range.first), styles)
             val g = m.groups
             when {
-                g[1] != null -> walk(b, g[1]!!.value, styles + St.BOLD)
-                g[2] != null -> walk(b, g[2]!!.value, styles + St.ITALIC)
-                g[3] != null -> walk(b, g[3]!!.value, styles + St.UNDERLINE)
-                g[4] != null -> walk(b, g[4]!!.value, styles + St.STRIKE)
-                g[5] != null -> walk(b, g[5]!!.value, styles + St.MASK)
+                g[1] != null -> walk(b, g[1]!!.value, styles + St.BOLD, depth + 1)
+                g[2] != null -> walk(b, g[2]!!.value, styles + St.ITALIC, depth + 1)
+                g[3] != null -> walk(b, g[3]!!.value, styles + St.UNDERLINE, depth + 1)
+                g[4] != null -> walk(b, g[4]!!.value, styles + St.STRIKE, depth + 1)
+                g[5] != null -> walk(b, g[5]!!.value, styles + St.MASK, depth + 1)
                 g[7] != null -> {
                     val href = g[6]!!.value.trim()
                     if (isHttpUrl(href)) {
                         b.withLink(LinkAnnotation.Url(href)) {
-                            walk(this, g[7]!!.value, styles + St.LINK)
+                            walk(this, g[7]!!.value, styles + St.LINK, depth + 1)
                         }
                     } else {
-                        walk(b, g[7]!!.value, styles)
+                        walk(b, g[7]!!.value, styles, depth + 1)
                     }
                 }
                 g[9] != null -> b.withLink(LinkAnnotation.Url("https://bgm.tv/user/${g[8]!!.value}")) {

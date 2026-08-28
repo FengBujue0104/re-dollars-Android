@@ -1143,8 +1143,14 @@ class ChatViewModel @Inject constructor(
             val pendingId = obj?.get("pendingId")?.jsonPrimitive?.let { runCatching { it.content.toLong() }.getOrNull() } ?: obj?.get("id")?.jsonPrimitive?.let { runCatching { it.content.toLong() }.getOrNull() }
             log("WebView POST -> ok=$ok status=$status url=${url.take(80)} head=${head.take(80)} pendingId=$pendingId")
             val pending = when {
-                pendingId != null -> pendingSends.find { it.id == pendingId } ?: pendingSends.firstOrNull()
+                pendingId != null -> pendingSends.find { it.id == pendingId }
                 else -> pendingSends.firstOrNull()
+            }
+            if (pendingId != null && pending == null) {
+                // The send was already resolved (duplicate deliver): falling back to
+                // the queue head would remove a still-pending send by mistake.
+                log("WebView POST for unknown pendingId=$pendingId — ignoring")
+                return@launch
             }
             val pendingBody = pending?.text ?: pendingText
             if (status == 401 || status == 403 || url.contains("/login", ignoreCase = true)) {

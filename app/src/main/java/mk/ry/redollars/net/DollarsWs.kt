@@ -159,7 +159,20 @@ class DollarsWs(
         heartbeat = scope.launch {
             while (isActive) {
                 delay(Config.HEARTBEAT_INTERVAL_MS)
-                currentSocket?.send("""{"type":"ping"}""")
+                val socket = currentSocket ?: break
+                // No pong for two intervals means the link is dead even when no TCP
+                // error surfaces (silent NAT drop); reconnect instead of pinging a
+                // black hole and relying on the shared client's read timeout.
+                if (System.currentTimeMillis() - lastPongAt > Config.HEARTBEAT_STALE_MS) {
+                    onEvent(WsEvent.Log("WS stale (no pong) — reconnecting"))
+                    currentSocket = null
+                    socket.close(1000, "stale")
+                    stopHeartbeat()
+                    onEvent(WsEvent.Status(false))
+                    scheduleReconnect()
+                    break
+                }
+                socket.send("""{"type":"ping"}""")
             }
         }
     }

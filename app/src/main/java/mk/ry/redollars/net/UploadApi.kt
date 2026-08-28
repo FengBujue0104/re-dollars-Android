@@ -22,8 +22,10 @@ data class UploadResult(val url: String? = null, val error: String? = null)
 class UploadApi(base: OkHttpClient) {
 
     // Uploads can be slow; the shared client's 30s read timeout is too tight.
+    // callTimeout is deliberately NOT set: it caps the whole call, which on a
+    // typical mobile upstream kills uploads far below the 200MB the UI promises.
+    // writeTimeout/readTimeout are per-op idle timeouts and already catch stalls.
     private val client = base.newBuilder()
-        .callTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
