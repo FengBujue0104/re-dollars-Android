@@ -21,16 +21,16 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "mk.ry.redollars.mod"
+        applicationId = "mk.ry.redollars"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.3.18"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     signingConfigs {
         create("release") {
-            storeFile = file("../release-test.keystore")
+            storeFile = file("../release.keystore")
 
             val localProperties = Properties()
             val localPropertiesFile = rootProject.file("local.properties")
@@ -42,32 +42,13 @@ android {
             keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: localProperties.getProperty("RELEASE_KEY_ALIAS")
             keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: localProperties.getProperty("RELEASE_KEY_PASSWORD")
         }
-
-        create("mod") {
-            storeFile = file("../mod.keystore")
-
-            val localProperties = Properties()
-            val localPropertiesFile = rootProject.file("local.properties")
-            if (localPropertiesFile.exists()) {
-                localProperties.load(FileInputStream(localPropertiesFile))
-            }
-
-            storePassword = System.getenv("MOD_STORE_PASSWORD") ?: localProperties.getProperty("MOD_STORE_PASSWORD") ?: "re-dollars-mod"
-            keyAlias = System.getenv("MOD_KEY_ALIAS") ?: localProperties.getProperty("MOD_KEY_ALIAS") ?: "mod"
-            keyPassword = System.getenv("MOD_KEY_PASSWORD") ?: localProperties.getProperty("MOD_KEY_PASSWORD") ?: "re-dollars-mod"
-        }
     }
 
     buildTypes {
-        debug {
-            signingConfig = signingConfigs.getByName("mod")
-        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // The upstream release keystore is the maintainer's private key; local
-            // release APKs sign with the mod keystore (same identity as debug builds).
-            signingConfig = signingConfigs.getByName("mod")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
