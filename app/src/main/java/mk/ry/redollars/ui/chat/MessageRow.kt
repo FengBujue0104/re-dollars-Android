@@ -69,6 +69,7 @@ import mk.ry.redollars.net.MessageDto
 import mk.ry.redollars.ui.render.BBCodeMessage
 import mk.ry.redollars.ui.render.LocalAutoLoadMedia
 import mk.ry.redollars.ui.render.LocalBubbleLongPress
+import mk.ry.redollars.ui.render.LocalBubuScale
 import mk.ry.redollars.ui.render.ReplyHeader
 import mk.ry.redollars.ui.render.Smilies
 import mk.ry.redollars.ui.render.avatarUrl
@@ -309,6 +310,7 @@ fun MessageRow(
                                 CompositionLocalProvider(
                                     LocalBubbleLongPress provides { showQuickReact = true },
                                     LocalAutoLoadMedia provides prefs.autoLoadMediaPreviews,
+                                    LocalBubuScale provides prefs.bubuScale,
                                 ) {
                                     BBCodeMessage(m.message)
                                 }

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import coil3.compose.AsyncImage
 import mk.ry.redollars.bmo.BmoImage
+import mk.ry.redollars.data.BubuScale
 import mk.ry.redollars.net.ReplyDetails
 
 /** Long-press on media embedded in a message (inline images, stickers): the chat bubble
@@ -64,6 +65,9 @@ val LocalBubbleLongPress = compositionLocalOf<(() -> Unit)?> { null }
  *  placeholders and stops video poster fetching (already-cached frames still render).
  *  Stickers/smilies stay inline text-sized media and keep loading. */
 val LocalAutoLoadMedia = compositionLocalOf { true }
+
+/** Side-length multiplier for the musume/blake ("布布") dynamic emojis (界面设置). */
+val LocalBubuScale = compositionLocalOf { BubuScale.SMALL }
 
 // ---------------------------------------------------------------------------
 // Block-level parsing
@@ -176,8 +180,8 @@ private fun spanFor(styles: Set<St>, linkColor: Color, maskBg: Color): SpanStyle
     )
 }
 
-private fun smileyInline(src: String, large: Boolean): InlineTextContent {
-    val size = if (large) 2.6.em else 1.5.em
+private fun smileyInline(src: String, large: Boolean, bubuScale: BubuScale): InlineTextContent {
+    val size = if (large) (2.6f * bubuScale.factor).em else 1.5.em
     return InlineTextContent(Placeholder(size, size, PlaceholderVerticalAlign.TextCenter)) {
         AsyncImage(model = src, contentDescription = null, modifier = Modifier.fillMaxWidth())
     }
@@ -211,7 +215,12 @@ private fun bmoInline(code: String): InlineTextContent =
         BmoImage(code, Modifier.fillMaxSize())
     }
 
-private fun buildInline(text: String, linkColor: Color, maskBg: Color): InlineResult {
+private fun buildInline(
+    text: String,
+    linkColor: Color,
+    maskBg: Color,
+    bubuScale: BubuScale,
+): InlineResult {
     val inline = LinkedHashMap<String, InlineTextContent>()
     val counter = intArrayOf(0)
 
@@ -269,7 +278,7 @@ private fun buildInline(text: String, linkColor: Color, maskBg: Color): InlineRe
                         smileySrc != null -> {
                             val key = "sm${counter[0]++}"
                             val large = raw.startsWith("(musume_") || raw.startsWith("(blake_")
-                            inline[key] = smileyInline(smileySrc, large)
+                            inline[key] = smileyInline(smileySrc, large, bubuScale)
                             b.appendInlineContent(key, raw)
                         }
                         // Legacy (bmo_name) codes stay as text.
@@ -324,8 +333,9 @@ private fun InlineText(
     onOverflow: (Boolean) -> Unit = {},
 ) {
     val cs = MaterialTheme.colorScheme
-    val result = remember(text, cs.primary, cs.surfaceVariant) {
-        buildInline(text, linkColor = cs.primary, maskBg = cs.surfaceVariant)
+    val bubuScale = LocalBubuScale.current
+    val result = remember(text, cs.primary, cs.surfaceVariant, bubuScale) {
+        buildInline(text, linkColor = cs.primary, maskBg = cs.surfaceVariant, bubuScale = bubuScale)
     }
     Text(
         text = result.annotated,

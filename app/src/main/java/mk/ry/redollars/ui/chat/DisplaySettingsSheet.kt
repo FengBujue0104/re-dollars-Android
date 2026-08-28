@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import mk.ry.redollars.data.BubuScale
 import mk.ry.redollars.data.DisplayPrefs
 
 /** Interface display settings (opened from the top-bar overflow menu). Each toggle maps
@@ -71,6 +75,44 @@ fun DisplaySettingsSheet(
                 checked = prefs.showQuickReactions,
                 onChecked = { v -> onChange { it.copy(showQuickReactions = v) } },
             )
+            BubuScaleRow(
+                selected = prefs.bubuScale,
+                onSelect = { v -> onChange { it.copy(bubuScale = v) } },
+            )
+        }
+    }
+}
+
+/** "让布布变大吧": musume/blake dynamic-emoji size in chat — 小 is the classic
+ *  inline size, 中/大 double/quadruple the side length. */
+@Composable
+private fun BubuScaleRow(selected: BubuScale, onSelect: (BubuScale) -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text("让布布变大吧", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = "Musume / Blake 动态表情在聊天中的显示大小",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            listOf(
+                "小" to BubuScale.SMALL,
+                "中" to BubuScale.MEDIUM,
+                "大" to BubuScale.LARGE,
+            ).forEachIndexed { index, (label, value) ->
+                SegmentedButton(
+                    selected = selected == value,
+                    onClick = { onSelect(value) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = 3),
+                ) {
+                    Text(label)
+                }
+            }
         }
     }
 }
