@@ -7,7 +7,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -132,24 +134,55 @@ fun MessageRow(
         Modifier.pointerInput(m.id, endAligned) {
             val maxPull = 60.dp.toPx()
             val ease = 150.dp.toPx()
+            val touchSlop = viewConfiguration.touchSlop
+            // The bubble only claims a gesture when horizontal intent is unambiguous:
+            // 3× plain touch slop of horizontal travel AND 2:1 over any vertical drift.
+            // detectHorizontalDragGestures claimed on bare slop, so a list scroll with
+            // slight sideways jitter crossed horizontal slop first and stole (and
+            // killed) the vertical page swipe.
+            val claimSlop = touchSlop * 3
+            val dominance = 2f
             var raw = 0f
-            detectHorizontalDragGestures(
-                onDragStart = { raw = 0f },
-                onDragCancel = { swipeScope.launch { swipeOffset.animateTo(0f, spring()) } },
-                onDragEnd = {
-                    val hit = swipeOffset.value >= swipeTriggerPx
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                raw = 0f
+                var dx = 0f
+                var dy = 0f
+                var claimed = false
+                var cancelled = false
+                var last = down.position
+                while (true) {
+                    val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                        ?: break
+                    if (!change.pressed) break
+                    val delta = change.position - last
+                    last = change.position
+                    if (!claimed) {
+                        if (change.isConsumed) break // scroll/another gesture took over
+                        dx += delta.x
+                        dy += delta.y
+                        if (abs(dy) > touchSlop) break // vertical intent: leave it to the list
+                        if (abs(dx) > claimSlop && abs(dx) > abs(dy) * dominance) claimed = true
+                    } else {
+                        if (change.isConsumed) {
+                            cancelled = true
+                            break
+                        }
+                        raw += delta.x
+                        val pulled = (raw * swipeDir).coerceAtLeast(0f)
+                        val eased = maxPull * (1f - exp(-pulled / ease))
+                        if (eased != swipeOffset.value) {
+                            change.consume()
+                            swipeScope.launch { swipeOffset.snapTo(eased) }
+                        }
+                    }
+                }
+                if (claimed) {
+                    val hit = !cancelled && swipeOffset.value >= swipeTriggerPx
                     swipeScope.launch {
                         swipeOffset.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                        if (hit) onReply()
                     }
-                    if (hit) onReply()
-                },
-            ) { change, delta ->
-                raw += delta
-                val pulled = (raw * swipeDir).coerceAtLeast(0f)
-                val eased = maxPull * (1f - exp(-pulled / ease))
-                if (eased != swipeOffset.value) {
-                    change.consume()
-                    swipeScope.launch { swipeOffset.snapTo(eased) }
                 }
             }
         }
