@@ -1,0 +1,71 @@
+name: Pin watch
+
+# Mon 01:00 UTC ≈ Mon 09:00 Asia/Hong_Kong
+on:
+  schedule:
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  pin-watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify pins (with expiry warnings)
+        id: verify
+        run: |
+          set +e
+          python3 tools/verify-certificate-pins.py --check-expiry --json > /tmp/pins.json
+          code=$?
+          cat /tmp/pins.json
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Open or update certificate-pins issue
+        if: steps.verify.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="certificate-pins: live chain no longer matches AppModule/NSC"
+          BODY_FILE=$(mktemp)
+          {
+            echo "## Certificate pin mismatch"
+            echo
+            echo "Scheduled \`pin-watch\` found that the live TLS chain no longer matches configured pins."
+            echo "As a third-party client we do not control \`*.ry.mk\` — update **intermediate** pins (YE1/YE2 or successors), ship a new APK ASAP."
+            echo
+            echo "- Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "- Docs: \`docs/certificate-pinning.md\`"
+            echo
+            echo "### Verifier JSON"
+            echo '```json'
+            cat /tmp/pins.json
+            echo '```'
+          } > "$BODY_FILE"
+
+          EXISTING=$(gh issue list --label certificate-pins --state open --json number,title --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file "$BODY_FILE"
+            echo "Updated issue #$EXISTING"
+          else
+            # Ensure label exists (ignore error if it already does)
+            gh label create certificate-pins --description "TLS certificate pin drift / intermediate rollover" --color B60205 2>/dev/null || true
+            gh issue create --title "$TITLE" --label certificate-pins --body-file "$BODY_FILE"
+          fi
+
+      - name: Fail job if pins mismatched
+        if: steps.verify.outputs.failed == 'true'
+        run: |
+          echo "Pin verification failed — see issue / log above."
+          exit 1
