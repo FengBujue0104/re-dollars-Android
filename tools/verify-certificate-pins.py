@@ -147,13 +147,16 @@ def main() -> int:
     network = xml_pins()
     now = datetime.now(timezone.utc)
 
+    out = sys.stderr if args.json else sys.stdout
     print(
         f"{'Host':<12}  {'Live match':<24}  {'SPKI SHA-256 (base64)':<44}  "
-        f"{'App↔Live':<8}  {'NSC⊇App':<7}  Status"
+        f"{'App↔Live':<8}  {'NSC⊇App':<7}  Status",
+        file=out,
     )
     print(
         f"{'-'*12}  {'-'*24}  {'-'*44}  "
-        f"{'-'*8}  {'-'*7}  ------"
+        f"{'-'*8}  {'-'*7}  ------",
+        file=out,
     )
 
     ok = True
@@ -165,7 +168,7 @@ def main() -> int:
             chain = live_chain(host)
         except Exception as exc:  # noqa: BLE001 — report per-host and fail
             ok = False
-            print(f"{host:<12}  {'ERROR':<24}  {'':<44}  {'FAIL':<8}  {'':7}  FAIL ({exc})")
+            print(f"{host:<12}  {'ERROR':<24}  {'':<44}  {'FAIL':<8}  {'':7}  FAIL ({exc})", file=out)
             results.append({"host": host, "status": "FAIL", "error": str(exc)})
             continue
 
@@ -190,7 +193,8 @@ def main() -> int:
         print(
             f"{host:<12}  {label:<24}  {pin:<44}  "
             f"{'MATCH' if live_ok else 'MISS':<8}  "
-            f"{'OK' if nsc_ok else 'MISS':<7}  {status}"
+            f"{'OK' if nsc_ok else 'MISS':<7}  {status}",
+            file=out,
         )
 
         leaf_subj, leaf_pin, leaf_na = chain[0]
@@ -247,15 +251,23 @@ def main() -> int:
     }
     if args.json:
         print(json.dumps(summary, indent=2))
+    else:
+        if not ok:
+            print(
+                "\nFAIL: each host needs (1) ≥1 live chain cert in AppModule pins and "
+                "(2) NSC pin-set ⊇ that host's AppModule pins.",
+                file=sys.stderr,
+            )
+        else:
+            print("\nAll hosts PASS (live ∩ AppModule nonempty; NSC ⊇ AppModule).")
 
     if not ok:
-        print(
-            "\nFAIL: each host needs (1) ≥1 live chain cert in AppModule pins and "
-            "(2) NSC pin-set ⊇ that host's AppModule pins.",
-            file=sys.stderr,
-        )
+        if args.json:
+            print(
+                "FAIL: live chain / AppModule / NSC pin mismatch — see JSON above.",
+                file=sys.stderr,
+            )
         return 1
-    print("\nAll hosts PASS (live ∩ AppModule nonempty; NSC ⊇ AppModule).")
     return 0
 
 
