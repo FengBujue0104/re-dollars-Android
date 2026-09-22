@@ -51,6 +51,12 @@ jobs:
             echo "No GOOGLE_SERVICES_JSON_BASE64 secret set; building without FCM."
           fi
 
+      # --- Pin gate -----------------------------------------------------------
+      # Fail the release before signing/building if live chain no longer matches
+      # configured OkHttp / NSC pins (needs network egress to rd.ry.mk etc.).
+      - name: Verify certificate pins
+        run: python3 tools/verify-certificate-pins.py
+
       # --- Build -------------------------------------------------------------
       # The passwords are read by app/build.gradle.kts via System.getenv(...),
       # so we just expose them as env vars here.
