@@ -3,6 +3,14 @@
 v0.0 — v0.3.18 为旧版本号方案下的历史发布说明（保留备查）。
 自 v1.2 起改用上游版本号方案（versionName 1.2 / versionCode 3），发布由 GitHub Actions 自动完成。
 
+## v1.4 — 修复证书固定  (2026-09-22)
+
+- 更新 `rd.ry.mk`、`up.ry.mk` 和 `auth.ry.mk` 的 `*.ry.mk` 叶证书 SPKI，并保留 YE1 中间证书作为备份。
+- 保留仍匹配的 `bgm.tv` / `lain.bgm.tv` 叶证书与 YE1 固定。
+- applicationId 保持 `mk.ry.redollars`，release 签名保持与 v1.2 相同，可直接更新。
+
+---
+
 ## v0.3.18 — 让布布变大吧！  (2026-08-28)
 
 新功能：调整 Musume / Blake 动态表情在聊天中的显示大小，versionCode 22。
