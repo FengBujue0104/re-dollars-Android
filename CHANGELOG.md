@@ -3,6 +3,16 @@
 v0.0 — v0.3.18 为旧版本号方案下的历史发布说明（保留备查）。
 自 v1.2 起改用上游版本号方案（versionName 1.2 / versionCode 3），发布由 GitHub Actions 自动完成。
 
+## v1.4.1 — 中间证书固定（抗叶证书轮换）  (2026-09-22)
+
+- `rd.ry.mk` / `up.ry.mk` / `auth.ry.mk`：改为只固定 Let's Encrypt **YE1 + YE2** 中间证书，去掉叶证书固定（第三方客户端无法预知叶证书轮换）。
+- `bgm.tv` / `lain.bgm.tv`：保留现有叶证书 + YE1，并增加 YE2 作为耐久备份。
+- 新增 `docs/certificate-pinning.md`；硬化 `tools/verify-certificate-pins.py`（NSC 可为超集；`--check-expiry` / `--json`）。
+- CI：`verify-pins.yml`（PR/main）、`pin-watch.yml`（定时探测 + Issue）、`release.yml` 在 assembleRelease 前跑同一校验。
+- versionCode **6** / versionName **1.4.1**。
+
+---
+
 ## v1.4 — 修复证书固定  (2026-09-22)
 
 - 更新 `rd.ry.mk`、`up.ry.mk` 和 `auth.ry.mk` 的 `*.ry.mk` 叶证书 SPKI，并保留 YE1 中间证书作为备份。

@@ -29,20 +29,45 @@ annotation class ApplicationScope
 @InstallIn(SingletonComponent::class)
 object AppModule {
 
+    /**
+     * Certificate pinning strategy (third-party client — we do not control *.ry.mk / auth.ry.mk):
+     *
+     * - Prefer long-lived Let's Encrypt **intermediates** (YE1 / YE2). OkHttp accepts a
+     *   connection if ANY cert in the presented chain matches a pin, so intermediate pins
+     *   survive routine leaf rotations without an app update.
+     * - Do **not** pin LE leaf SPKIs for hosts we do not operate; leaves rotate every ~60–90
+     *   days with no advance notice to us.
+     * - Dual-pin (old+new intermediate) only when *we* ship an app during a known LE
+     *   intermediate migration — never as coordination with server owners.
+     * - bgm.tv / lain.bgm.tv: keep the current leaf + YE1 (still matching), plus YE2 as a
+     *   durable backup for LE's random intermediate selection.
+     *
+     * Keep OkHttp host pins and [network_security_config.xml] conceptually in sync: NSC may
+     * use one shared pin-set that is a **superset** of all pins here.
+     *
+     * See docs/certificate-pinning.md.
+     */
     @Provides
     @Singleton
     fun provideOkHttp(): OkHttpClient {
+        // Pins must be string literals (tools/verify-certificate-pins.py parses .add(...)).
+        // YE1: brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=
+        // YE2: s/tdAOmUzd8syaTuqfgGvFcn6DzA5Cmb+Vby1ST+U3Y=  (letsencrypt.org/certs/gen-y/int-ye2.pem)
         val pinner = CertificatePinner.Builder()
-            .add("rd.ry.mk", "sha256//V45t/4JCO3Mf5A78GtIGCNx92UiH5y1cBBuTCo0dxE=")
+            // Backend hosts we do not control: YE1 + YE2 intermediates only
             .add("rd.ry.mk", "sha256/brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=")
-            .add("up.ry.mk", "sha256//V45t/4JCO3Mf5A78GtIGCNx92UiH5y1cBBuTCo0dxE=")
+            .add("rd.ry.mk", "sha256/s/tdAOmUzd8syaTuqfgGvFcn6DzA5Cmb+Vby1ST+U3Y=")
             .add("up.ry.mk", "sha256/brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=")
-            .add("auth.ry.mk", "sha256//V45t/4JCO3Mf5A78GtIGCNx92UiH5y1cBBuTCo0dxE=")
+            .add("up.ry.mk", "sha256/s/tdAOmUzd8syaTuqfgGvFcn6DzA5Cmb+Vby1ST+U3Y=")
             .add("auth.ry.mk", "sha256/brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=")
+            .add("auth.ry.mk", "sha256/s/tdAOmUzd8syaTuqfgGvFcn6DzA5Cmb+Vby1ST+U3Y=")
+            // Bangumi: current leaf + YE1/YE2
             .add("bgm.tv", "sha256/eTHuRU78dJxZftsRBfCUU0cRPMW/iJKDCgMLoZkQerE=")
             .add("bgm.tv", "sha256/brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=")
+            .add("bgm.tv", "sha256/s/tdAOmUzd8syaTuqfgGvFcn6DzA5Cmb+Vby1ST+U3Y=")
             .add("lain.bgm.tv", "sha256/eTHuRU78dJxZftsRBfCUU0cRPMW/iJKDCgMLoZkQerE=")
             .add("lain.bgm.tv", "sha256/brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=")
+            .add("lain.bgm.tv", "sha256/s/tdAOmUzd8syaTuqfgGvFcn6DzA5Cmb+Vby1ST+U3Y=")
             .build()
         return OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)

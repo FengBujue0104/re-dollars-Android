@@ -52,6 +52,17 @@ itself (`bgm.tv`), and posting reuses that browser session (cookies + `formhash`
 one-time login via [rymk-auth](https://auth.ry.mk) obtains a backend JWT, needed for reactions,
 edit/delete, read state, uploads, and push registration. See §3 of the spec for details.
 
+
+## Certificate pinning
+
+TLS pins prefer long-lived Let's Encrypt **YE1/YE2 intermediates** for backend hosts we do not
+control (so routine leaf rotation does not break the app). See
+[docs/certificate-pinning.md](docs/certificate-pinning.md). Verify locally with:
+
+```bash
+python3 tools/verify-certificate-pins.py
+```
+
 ## Architecture
 
 MVVM with a single-activity Compose UI:

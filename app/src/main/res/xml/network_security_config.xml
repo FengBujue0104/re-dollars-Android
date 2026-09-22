@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Certificate pinning (NSC + OkHttp in AppModule.kt).
+
+  Strategy: as a third-party client we do not control *.ry.mk / auth.ry.mk and get no
+  notice of leaf rotations. Prefer long-lived Let's Encrypt intermediates YE1/YE2;
+  leaf pins only where still useful (bgm) and never as the sole pin for hosts we
+  don't operate. This shared pin-set is a superset of all AppModule host pins.
+
+  See docs/certificate-pinning.md.
+-->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
@@ -14,11 +24,11 @@
         <domain includeSubdomains="true">chii.in</domain>
         <domain includeSubdomains="true">lain.bgm.tv</domain>
         <pin-set>
-            <!-- *.ry.mk leaf (rotated 2026-09-21) -->
-            <pin digest="SHA-256">/V45t/4JCO3Mf5A78GtIGCNx92UiH5y1cBBuTCo0dxE=</pin>
-            <!-- YE1 intermediate (backup for ry.mk + bgm) -->
+            <!-- YE1 intermediate (durable backup for all LE Gen-Y hosts) -->
             <pin digest="SHA-256">brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=</pin>
-            <!-- bgm.tv / lain.bgm.tv leaf -->
+            <!-- YE2 intermediate (LE picks YE1/YE2 at random; pin both) -->
+            <pin digest="SHA-256">s/tdAOmUzd8syaTuqfgGvFcn6DzA5Cmb+Vby1ST+U3Y=</pin>
+            <!-- bgm.tv / lain.bgm.tv leaf (transitional; still matches) -->
             <pin digest="SHA-256">eTHuRU78dJxZftsRBfCUU0cRPMW/iJKDCgMLoZkQerE=</pin>
         </pin-set>
     </domain-config>
