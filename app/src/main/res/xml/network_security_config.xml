@@ -6,20 +6,20 @@
         </trust-anchors>
     </base-config>
     <domain-config cleartextTrafficPermitted="false">
-        <domain>rd.ry.mk</domain>
-        <domain>up.ry.mk</domain>
-        <domain>auth.ry.mk</domain>
+        <domain includeSubdomains="true">rd.ry.mk</domain>
+        <domain includeSubdomains="true">up.ry.mk</domain>
+        <domain includeSubdomains="true">auth.ry.mk</domain>
+        <domain includeSubdomains="true">bgm.tv</domain>
+        <domain includeSubdomains="true">bangumi.tv</domain>
+        <domain includeSubdomains="true">chii.in</domain>
+        <domain includeSubdomains="true">lain.bgm.tv</domain>
         <pin-set>
+            <!-- *.ry.mk leaf (rotated 2026-09-21) -->
             <pin digest="SHA-256">/V45t/4JCO3Mf5A78GtIGCNx92UiH5y1cBBuTCo0dxE=</pin>
+            <!-- YE1 intermediate (backup for ry.mk + bgm) -->
             <pin digest="SHA-256">brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=</pin>
-        </pin-set>
-    </domain-config>
-    <domain-config cleartextTrafficPermitted="false">
-        <domain>bgm.tv</domain>
-        <domain>lain.bgm.tv</domain>
-        <pin-set>
+            <!-- bgm.tv / lain.bgm.tv leaf -->
             <pin digest="SHA-256">eTHuRU78dJxZftsRBfCUU0cRPMW/iJKDCgMLoZkQerE=</pin>
-            <pin digest="SHA-256">brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=</pin>
         </pin-set>
     </domain-config>
 </network-security-config>
